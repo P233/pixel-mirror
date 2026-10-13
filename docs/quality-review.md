@@ -1,7 +1,7 @@
 # Pixel Mirror 质量评审记录
 
 > 最后更新：2026-10-13
-> 评审基线：`72e0760`；依赖升级：`1b4c862`
+> 评审基线：`72e0760`；依赖升级：`1b4c862`、`3a03936`
 > 本文档持续维护：问题修复后更新「状态」列，不删除条目。
 
 ## 目录
@@ -26,6 +26,7 @@
   2. 作为注入宿主页面的工具，对宿主干扰过多（键盘、拖放、错误处理、样式）。
   3. `mockupOverlayStore` 承担了状态、持久化、状态机、DOM 监听、桌面端与移动端手势的全部职责。
 - **这些 bug 多数不是孤立的**，背后是 5 个结构性原因（[第 3 节](#3-根本原因)）。只修表面，下一个功能还会长出同类问题。
+- **依赖**：已全部升级到最新版（TypeScript 停在 6.0.3），检查和测试全部通过，产物视觉零差异；升级带来的新解法见[第 6 节](#6-依赖升级记录与新方案)。
 - **建议**：渐进式重构，分 6 个 PR，先修 bug 并配回归测试，再逐层重构（[第 8 节](#8-迁移路线)）；不建议推倒重写。
 
 ---
@@ -57,15 +58,16 @@
 
 ### 2.2 对宿主页面的侵入性
 
-| ID  | 问题                                                                                                                                     | 严重度 | 证据                                                                                     | 状态 |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------- | ---- |
-| H1  | 键盘处理不过滤修饰键、输入法组合（`isComposing`）和 `defaultPrevented`；锁定状态下也拦截空格；Escape 与宿主弹窗冲突                      | 高     | Cmd/Alt/Ctrl + ← 均被拦截；Shift+空格（向上翻页）失效：2000 → 2000（对照页 2000 → 1300） | ⬜   |
-| H2  | 宿主页面的可继承样式（`font-size`、`line-height`、`letter-spacing`、`text-transform`、`color`）穿透 Shadow DOM，没有 `:host` 重置        | 高     | 截图：Grid Manager 表格被撑开，Position 列和 Add 按钮被挤出可视区                        | ⬜   |
-| H3  | 锁定后 mockup 仍是 `pointer-events: auto`，点不到下面的宿主页面                                                                          | 中     | 宿主按钮的点击计数不变，`elementFromPoint` 命中 `pixel-mirror`                           | 🟨   |
-| H4  | `main.ts` 直接调用 `document.body.appendChild`：同步脚本，以及 Astro 集成（动态插入的脚本 `defer` 无效）在 `<head>` 里有慢脚本时都会崩溃 | 中     | `TypeError: Cannot read properties of null (reading 'appendChild')`                      | ⬜   |
-| H5  | Vite 插件把路径写死为 `/node_modules/pixel-mirror/...`，依赖提升到根目录的 monorepo 中返回 SPA 兜底页                                    | 中     | 返回 `Content-Type: text/html`；对照组返回 `text/javascript`                             | ⬜   |
-| H6  | 修改宿主的 `html { position: relative }`，mockup 可见时修改 `touch-action`                                                               | 低     | 设计取舍，已写入 README                                                                  | 🟨   |
-| H7  | 没有防重复注册：脚本被加载两次时，`customElements.define` 抛错                                                                           | 低     | 读代码：产物中 `define` 前没有 `get` 检查                                                | ⬜   |
+| ID  | 问题                                                                                                                                                                                                                                     | 严重度 | 证据                                                                                     | 状态 |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------- | ---- |
+| H1  | 键盘处理不过滤修饰键、输入法组合（`isComposing`）和 `defaultPrevented`；锁定状态下也拦截空格；Escape 与宿主弹窗冲突                                                                                                                      | 高     | Cmd/Alt/Ctrl + ← 均被拦截；Shift+空格（向上翻页）失效：2000 → 2000（对照页 2000 → 1300） | ⬜   |
+| H2  | 宿主页面的可继承样式（`font-size`、`line-height`、`letter-spacing`、`text-transform`、`color`）穿透 Shadow DOM，没有 `:host` 重置                                                                                                        | 高     | 截图：Grid Manager 表格被撑开，Position 列和 Add 按钮被挤出可视区                        | ⬜   |
+| H3  | 锁定后 mockup 仍是 `pointer-events: auto`，点不到下面的宿主页面                                                                                                                                                                          | 中     | 宿主按钮的点击计数不变，`elementFromPoint` 命中 `pixel-mirror`                           | 🟨   |
+| H4  | `main.ts` 直接调用 `document.body.appendChild`：同步脚本，以及 Astro 集成（动态插入的脚本 `defer` 无效）在 `<head>` 里有慢脚本时都会崩溃                                                                                                 | 中     | `TypeError: Cannot read properties of null (reading 'appendChild')`                      | ⬜   |
+| H5  | Vite 插件把路径写死为 `/node_modules/pixel-mirror/...`，依赖提升到根目录的 monorepo 中返回 SPA 兜底页                                                                                                                                    | 中     | 返回 `Content-Type: text/html`；对照组返回 `text/javascript`                             | ⬜   |
+| H6  | 修改宿主的 `html { position: relative }`，mockup 可见时修改 `touch-action`                                                                                                                                                               | 低     | 设计取舍，已写入 README                                                                  | 🟨   |
+| H7  | 没有防重复注册：脚本被加载两次时，`customElements.define` 抛错                                                                                                                                                                           | 低     | 读代码：产物中 `define` 前没有 `get` 检查                                                | ⬜   |
+| H8  | 不支持启用了 Trusted Types 的宿主页面：`{@html}` 渲染图标时直接赋值 `innerHTML`，升级前后都无法渲染。Svelte 5.51 起会在加载时创建 `svelte-trusted-html` 策略，名称不在白名单内或宿主自己的 Svelte 已创建同名策略时，报错会提前到加载阶段 | 低     | 浏览器：5 种 CSP 配置下，新旧版本的 dock 均无法渲染                                      | ⬜   |
 
 ### 2.3 工程化与测试
 
@@ -76,7 +78,7 @@
 | E3  | CLAUDE.md（558 行）与代码脱节：`resetTouchState`、`addTouchListeners`、`removeTouchListeners`、`exitZoomedMode`、`setMode`、`handleMouseDown`、`hasActiveGrid` 在代码中不存在                                                                                     | ⬜           |
 | E4  | 没有 CI                                                                                                                                                                                                                                                           | ⬜           |
 | E5  | `prettier --check .` 在 `tsconfig.json`、`pnpm-lock.yaml` 上不通过（缺少 `.prettierignore`）                                                                                                                                                                      | ⬜           |
-| E6  | `svelte.config.js` 全局开启 `customElement: true`，每个组件都被包装成 custom element（同一组件产物 936 → 1242 字节）                                                                                                                                              | ⬜           |
+| E6  | `svelte.config.js` 全局开启 `customElement: true`，每个组件都被包装成 custom element（同一组件产物 936 → 1242 字节）。Svelte 5.54 起可以按文件开启，方案见 6.4                                                                                                    | ⬜           |
 | E7  | 全局关闭 svgo 的 `cleanupIds`，只为了用 CSS 选中一个图标内部的 `#toggle-trigger`                                                                                                                                                                                  | ⬜           |
 | E8  | 未使用的代码：`RESIZE_DEBOUNCE_MS`（实际写死 100）、`GRID_COLUMNS_MIN/MAX`（实际写死 1/100）、`validateNumberRange`、`keyboardStore` 暴露的 `isShiftPressed`/`isSpacePressed`、`device.ts` 的 3 个导出、`FileError` 别名、图标 `folder-upload-stroke-rounded.svg` | ⬜           |
 | E9  | 组件测试用手写的普通对象 mock store：不是响应式的，形状会漂移（mock 的 `DOCK_TRANSITION_DURATION` 是 200，实际是 250）；每个测试文件要手动 mock 17 个图标                                                                                                         | ⬜           |
@@ -316,7 +318,97 @@ Touch Events、Safari Gesture Events、空的 `handlePointerMove`、`captureImgE
 
 ## 6. 依赖升级记录与新方案
 
-> 待补充：依赖已全部升级（`1b4c862`），各依赖新能力与评审问题的对照正在整理。
+### 6.1 升级记录
+
+所有依赖都已升级到最新版，只有 TypeScript 例外，原因见 6.2。
+
+| 包                                                                                             | 升级前        | 升级后           | 本仓库需要做的适配                                                                                |
+| ---------------------------------------------------------------------------------------------- | ------------- | ---------------- | ------------------------------------------------------------------------------------------------- |
+| vite                                                                                           | 7.3.1         | 8.3.4            | 无。底层改为 Rolldown/Oxc；IIFE 库模式、postcss/cssnano 流程不变                                  |
+| @sveltejs/vite-plugin-svelte                                                                   | 6.2.4         | 7.3.1            | 删除已移除的 `hot` 选项（vitest 配置）                                                            |
+| svelte                                                                                         | 5.49.1        | 5.57.2           | 无                                                                                                |
+| vitest、@vitest/coverage-v8                                                                    | 4.0.18        | 5.0.4            | 无                                                                                                |
+| typescript                                                                                     | 5.9.3         | 6.0.3            | 删除已废弃的 `baseUrl`，`paths` 改为相对于 tsconfig 的路径                                        |
+| @testing-library/jest-dom                                                                      | 6.9.1         | 7.0.1            | 类型改从 `@testing-library/jest-dom/vitest` 加载；显式声明必需的 peer 依赖 `@testing-library/dom` |
+| eslint、@eslint/js                                                                             | 未声明 / 9.39 | 10.12.0 / 10.0.1 | 补上 `eslint` 依赖（B6）；改用 `eslint/config` 自带的 `includeIgnoreFile`，删除 `@eslint/compat`  |
+| typescript-eslint、eslint-plugin-svelte                                                        | 8.54 / 3.14   | 8.71.2 / 3.23.1  | 无                                                                                                |
+| svelte-check、prettier-plugin-svelte                                                           | 4.3 / 3.4     | 4.7.6 / 4.1.1    | 无，`.svelte` 文件格式没有变化                                                                    |
+| jsdom、cssnano、postcss-html、stylelint-config-html、lint-staged、@poppanator/sveltekit-svg 等 | —             | 最新版           | 无                                                                                                |
+| happy-dom                                                                                      | 20.5.0        | 已删除           | 从未被使用（E10）                                                                                 |
+
+**验证**：
+
+- `pnpm check`、`pnpm lint`、656 个测试、构建全部通过。
+- 升级前后的产物在 5 个 UI 场景下逐像素对比：0 差异，控制台无错误。
+- 产物 135.2 KB → 138.0 KB，gzip 42.25 KB → 42.77 KB。
+
+### 6.2 未升级到最新版的依赖
+
+- **TypeScript 停在 6.0.3，没有升到 7.0.2。**
+  - typescript-eslint 8.71.2 的 peer 范围是 `<6.1.0`；TS 7 支持还在开发中（[typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)），没有发布日期。
+  - svelte-check 只能通过 `--tsgo` 等实验性参数使用 TS 7，而且需要同时安装 TS 6 和 TS 7。
+  - 建议等 typescript-eslint 正式支持后再升级。TS 6 已经会对 TS 7 中移除的配置项报警，本仓库已全部处理。
+
+### 6.3 Node 版本要求
+
+升级后，多个开发依赖的 `engines` 声明了更高的 Node 版本：
+
+| 依赖           | Node 要求                        |
+| -------------- | -------------------------------- |
+| cssnano 9      | `^22.22.3 \|\| ^24.15 \|\| >=26` |
+| jsdom 30       | `^22.22.2 \|\| ^24.15 \|\| >=26` |
+| lint-staged 17 | `>=22.22.1`                      |
+| vitest 5       | `>=22.12`                        |
+
+本次验证环境是 Node 22.22.0，所有命令都能正常运行，但版本略低于声明的范围。**建议开发环境和 CI 统一使用 Node 24 LTS。** 不要在 `package.json` 里加 `engines` 字段：它会约束安装 `pixel-mirror` 的使用者，而这些要求只针对开发依赖。
+
+### 6.4 升级带来的新能力
+
+以下能力只有升级后才可用，括号内为引入的版本。
+
+| 能力                                                                                                           | 解决的问题          | 在本项目中的用法                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Svelte 编译选项 `customElement` 可以写成函数 `({ filename }) => boolean`（5.54）                               | E6                  | `customElement: ({ filename }) => filename.endsWith("/src/App.svelte")`。**必须同时设置 `css: "injected"`**：vite-plugin-svelte 7 在开启 `emitCss` 时默认 `css: "external"`（已在源码中核实），否则子组件的 CSS 会变成单独的文件，到不了 shadow root |
+| 修复：较晚挂载的子组件样式被插入 `document.head`，而不是 shadow root（5.56.10）                                | H2 相关             | 升级即生效。逐像素对比显示目前的 UI 没有受到影响，但后续拆分组件、按需挂载时能避免这个坑                                                                                                                                                             |
+| 事件委托改用 symbol，同一页面上不同 Svelte 实例之间不再互相干扰（5.51.1、5.51.3）                              | 注入场景的健壮性    | 宿主应用自己也用 Svelte（版本不同）时，避免 "delegate.call is not a function" 错误。升级即生效（未在本项目场景中复现）                                                                                                                               |
+| 组件销毁时，`on()` 延迟注册的 pointer/touch/wheel 监听器会被取消（5.57.1）                                     | R2、R6              | `on()` 可以放心用在生命周期很短的 attachment 和 effect 中，是统一手势层的前提                                                                                                                                                                        |
+| 过期的异步分支会被中止，派生值断开时其 AbortSignal 也会中止（5.55.6、5.56.5、5.56.6）                          | B5                  | 让 `getAbortSignal()` 的用法变得可靠（见 6.5）                                                                                                                                                                                                       |
+| `createContext` 在程序化 `mount` 时也能使用，并新增 `has`（5.50、5.57）                                        | R4、E9              | App 创建 store 实例并通过 context 下发；测试时通过 wrapper 注入真实 store                                                                                                                                                                            |
+| Vite `resolve.tsconfigPaths: true`（8.0）                                                                      | 配置重复            | 让 Vite 直接读取 tsconfig 的 `paths`，`vite.config.ts` 和 `vitest.config.ts` 里重复的 `~` 别名可以删掉。SCSS `additionalData` 中的 `~` 尚未验证，先保留 alias                                                                                        |
+| Vite 允许访问 pnpm 全局虚拟 store（8.1）                                                                       | H5                  | 插件可以改为注入 `/@fs/<插件所在包的绝对路径>/dist/index.js`，无论依赖被提升到哪里都能找到正确位置                                                                                                                                                   |
+| Vitest `vi.when(fn).calledWith(x).thenResolve(...)`（5.0）                                                     | E9                  | 按参数返回不同的数据库 mock，比如 `getMockup("a")` 和 `getMockup("b")`，竞态测试更好写                                                                                                                                                               |
+| Vitest 5 中对 `window.innerWidth` 等属性的写入会同步到 jsdom 的 window（5.0）                                  | B2                  | 可以在 jsdom 里测试 resize 和对齐逻辑                                                                                                                                                                                                                |
+| `@testing-library/svelte` 的 `wrapper` / `wrapperProps` 渲染选项（5.4）                                        | E9                  | 用一个 provider 组件包裹，注入真实的响应式 store，替换现在不响应变化的普通对象 mock                                                                                                                                                                  |
+| jsdom 29/30 重写了 CSSOM，`getComputedStyle` 支持继承                                                          | H2                  | 可以在单元测试中断言宿主样式不会穿透进 shadow root（有效程度待验证）                                                                                                                                                                                 |
+| ESLint `includeIgnoreFile` 从 `eslint/config` 导出（10.4）                                                     | 依赖精简            | ✅ 已采用（`3a03936`）                                                                                                                                                                                                                               |
+| ESLint `preserve-caught-error` 支持 `errorClassNames`（10.7）                                                  | 错误链              | 配置 `DatabaseError` 后，lint 会强制带上原始错误，配合 `Error.cause` 解决根因丢失的问题                                                                                                                                                              |
+| eslint-plugin-svelte 新规则：`no-conflicting-module-names`（3.22）、`prefer-derived-over-derived-by`（3.18）等 | 第 4 节的命名与结构 | 重构目录时防止出现 `Foo.svelte` 与 `Foo.svelte.ts` 同名冲突                                                                                                                                                                                          |
+
+### 6.5 升级前就已可用、但项目没用上的能力
+
+这些能力不需要升级也能用，但都直接对应评审中发现的问题，应该在重构中采用。
+
+| 能力（引入版本）                                                | 解决的问题   | 用法                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getAbortSignal()`（Svelte 5.35）                               | B5           | 在读取 `activeId` 的 `$effect` 中，await 之前先取得 signal，await 之后检查 `if (signal.aborted) return`，过期的结果直接丢弃                                                                                                                          |
+| `createSubscriber`（5.7）                                       | R1、B2、R4   | 用 `ResizeObserver` 监听 `documentElement`，通过 getter 返回 `clientWidth`、`scrollHeight`，对齐位置就成了普通的 `$derived`。它按引用计数自动启停：第一次被响应式读取时开始监听，最后一个 effect 销毁时停止，不需要手动 init/cleanup，重复挂载也安全 |
+| `svelte/reactivity/window`（5.11）                              | R1           | 提供 `innerWidth`、`scrollY` 等，但**没有** `clientWidth` 和 `scrollHeight`，所以对齐计算仍需用 `createSubscriber`                                                                                                                                   |
+| `MediaQuery`（5.7）                                             | 第 7 节      | `new MediaQuery("prefers-color-scheme: dark")` 实现「跟随系统」主题；`pointer: coarse` 用于控件尺寸                                                                                                                                                  |
+| `on()`（`svelte/events`，5.0）                                  | R2           | 统一注册监听器并返回解绑函数。注意：模板中的 `ontouchstart`/`ontouchmove` 是 passive 的，在里面调用 `preventDefault()` 无效，手势必须用 `on(el, "touchmove", h, { passive: false })`                                                                 |
+| `{@attach}`（5.29）                                             | R6           | 把统一的 Pointer Events 手势层写成 attachment                                                                                                                                                                                                        |
+| `$state.snapshot`（5.0）                                        | 5.5 节持久化 | IndexedDB 不能直接存 `$state` 代理对象。用 `$effect` 读取快照并防抖写入；在 `pagehide` 时立即写入未保存的修改                                                                                                                                        |
+| `$host()`（5.0）                                                | H1           | 用 `$host().shadowRoot.activeElement` 取代手写的 shadow DOM 遍历来判断焦点                                                                                                                                                                           |
+| 实验性的组件内 `await`（5.36）                                  | B5           | `$derived(await getMockup(id))` 天然丢弃过期结果。目前仍是实验特性，暂不建议采用                                                                                                                                                                     |
+| Vitest 浏览器模式（4.0）+ `vitest-browser-svelte`               | E1、手势测试 | 浏览器中有真实布局、shadow DOM、`DataTransfer` 和 pointer capture。jsdom 测 store，浏览器测 App 和 MockupOverlay，可以补上 App.svelte 0% 的覆盖率                                                                                                    |
+| `svelte/no-add-event-listener` 规则（eslint-plugin-svelte 3.6） | R2           | 开启后，lint 会要求使用 `on()`，防止监听器再次散落各处                                                                                                                                                                                               |
+
+### 6.6 升级带来的风险
+
+- **Trusted Types（H8）**：Svelte 5.51 起会在加载时创建 `svelte-trusted-html` 策略。实测在 5 种 CSP 配置下，升级前后的版本都无法渲染，根本原因是图标组件通过 `{@html}` 直接赋值 `innerHTML`。所以这不是升级造成的回退，只是报错时机变成了加载阶段。如需支持：
+  1. 把图标改成普通 Svelte 标记，不再走 `{@html}`；
+  2. 在文档中说明宿主的 CSP 需要允许 `svelte-trusted-html`；宿主自己也用 Svelte 时，还需要加上 `'allow-duplicates'`。
+- **构建目标提高**：Vite 8 的默认构建目标提高到 Safari 16.4、Chrome 111、Firefox 114。对开发工具来说可以接受。
+- **测试中的事件时序**：`on()` 会把 pointer/touch/wheel 监听器延迟一个微任务再注册。将来迁移到 `on()` 后，测试在派发这些事件之前需要先 `await` 一个微任务。
 
 ---
 
@@ -482,3 +574,5 @@ P0 必须排第一，它的回归测试会守住后面的重构；P2 要在 P3 �
 - **真实浏览器验证**：Playwright 加 Chromium，加载构建产物 `dist/index.js`，用无痕 context（IndexedDB 为空），并与不加载工具的对照页比较。
 - **Vite 插件验证**：在临时目录模拟依赖提升的 monorepo 和本地 `node_modules` 两种布局，分别请求脚本地址并比较 `Content-Type`。
 - **依赖升级验证**：升级前后的产物在 5 个 UI 场景下逐像素对比，结果为 0 差异，控制台无错误。
+- **Trusted Types 验证**：用带 CSP 响应头的本地服务器，在 5 种配置下（不启用、启用但不限策略名、只允许宿主策略、允许 svelte 策略、宿主已创建同名策略）对比新旧产物。
+- **依赖调研**：查阅各依赖的官方 CHANGELOG、迁移指南和发布说明，关键结论在已安装包的源码和类型定义中复核（如 `customElement` 函数类型、vite-plugin-svelte 的 `css` 默认值、`eslint/config` 的导出、bundle 中的 `createPolicy` 调用）。
