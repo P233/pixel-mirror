@@ -34,18 +34,16 @@ const OPACITY_DEFAULT = 0.5;
 const SCALE_OPTIONS = [0.5, 1] as const;
 const ZOOM_FACTOR = 2;
 
+// Pinch zoom range in solid mode (mobile)
+const PINCH_SCALE_MIN = 0.25;
+const PINCH_SCALE_MAX = 4;
+
 // ============================================
 // File Upload Settings
 // ============================================
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
-
-// ============================================
-// UI Settings
-// ============================================
-
-const RESIZE_DEBOUNCE_MS = 100;
 
 // ============================================
 // Touch Settings
@@ -86,7 +84,8 @@ export {
   OPACITY_MAX,
   OPACITY_MIN,
   OPACITY_STEP,
-  RESIZE_DEBOUNCE_MS,
+  PINCH_SCALE_MAX,
+  PINCH_SCALE_MIN,
   SCALE_OPTIONS,
   SCROLL_COOLDOWN,
   ZOOM_FACTOR

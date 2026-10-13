@@ -1,39 +1,60 @@
 /**
  * Mockup Overlay Store
  *
- * State Machine for Mockup Overlay:
+ * Holds the overlay state and applies user actions to it. The state model and the
+ * geometry are pure functions in ~/features/overlay; this store owns the reactive
+ * state, persistence and loading the mockup image.
  *
- * States:
+ * Derived 5-state mode (see model.ts):
  * - visible:   Default state. Can drag, adjust opacity, scale, align
- * - locked:    Frozen in place, no pointer events
- * - dragging:  During drag operation, only drag-related events active
- * - solid:     Full opacity, preparing for zoom (Space key held)
- * - zoomed:    2x zoom with pan capability (Click in solid mode)
+ * - locked:    Frozen in place
+ * - dragging:  During a drag
+ * - solid:     Full opacity for comparison (Space held / mobile double-tap), pinch/pan on mobile
+ * - zoomed:    2x zoom with mouse pan (click in solid mode)
  *
  * Transitions:
- * - visible → dragging:  Mouse down on overlay
- * - dragging → visible:  Mouse up
- * - visible → locked:    Escape key or toggle lock
- * - locked → visible:    Escape key or toggle lock
- * - visible → solid:     Space key down
- * - locked → solid:      Space key down
- * - solid → visible:     Space key up (if was visible)
- * - solid → locked:      Space key up (if was locked)
- * - solid → zoomed:      Mouse click
- * - zoomed → solid:      Mouse click
- * - zoomed → visible:    Space key up (if was visible)
- * - zoomed → locked:     Space key up (if was locked)
+ * - visible ⇄ locked:          toggleLock (Escape / toolbar)
+ * - visible → dragging → visible: drag
+ * - visible/locked → solid:    enterSolidMode / toggleMobileSolidMode
+ * - solid ⇄ zoomed:            enterZoomMode / exitZoomMode (click)
+ * - solid/zoomed → visible/locked: exitSolidMode / toggleMobileSolidMode
  *
- * Event Availability by State:
- * - visible:  drag, opacity, scale, align, move (arrow keys)
- * - locked:   none (can only toggle lock or enter solid)
- * - dragging: only drag movement
- * - solid:    only zoom enter (click)
- * - zoomed:   only zoom exit (click) or pan (mouse move)
+ * The rendered position is derived from the placement (alignment or free offset), the image
+ * size and the page size, so it stays correct when any of them change. Solid/zoom/pinch only
+ * set a temporary view on top, which is discarded on exit.
  */
 
 // Constants
-import { OPACITY_DEFAULT, OPACITY_MAX, OPACITY_MIN, OPACITY_STEP, SCALE_OPTIONS, ZOOM_FACTOR } from "~/constants";
+import {
+  OPACITY_DEFAULT,
+  OPACITY_MAX,
+  OPACITY_MIN,
+  OPACITY_STEP,
+  PINCH_SCALE_MAX,
+  PINCH_SCALE_MIN,
+  SCALE_OPTIONS,
+  ZOOM_FACTOR
+} from "~/constants";
+// Model
+import { distance, focusPoint, midpoint, resolvePosition } from "~/features/overlay/geometry";
+import {
+  alignmentX as getAlignmentX,
+  alignmentY as getAlignmentY,
+  can,
+  DEFAULT_PLACEMENT,
+  deriveMode,
+  describePlacement,
+  freePlacement,
+  IDLE,
+  isAligned as getIsAligned,
+  placementFromSettings,
+  type Interaction,
+  type OverlayMode,
+  type Placement,
+  type View
+} from "~/features/overlay/model";
+// Platform
+import { readViewportCenter, toPagePoint } from "~/platform/viewport";
 // Database
 import { getMockup, getSettingsByGroup, updateSetting } from "./database";
 // Stores
@@ -41,7 +62,7 @@ import { toastStore } from "./toastStore.svelte";
 // Utils
 import { clamp, roundTo } from "./utils";
 
-export type MockupOverlayMode = "visible" | "locked" | "dragging" | "solid" | "zoomed";
+export type MockupOverlayMode = OverlayMode;
 
 function createMockupOverlayStore() {
   // Persisted state
@@ -49,64 +70,39 @@ function createMockupOverlayStore() {
   let isHidden = $state(false);
   let isLocked = $state(false);
   let opacity = $state(OPACITY_DEFAULT);
-  let persistedPosition = $state<Position>({ x: 0, y: 0 });
-  let alignmentX = $state<MockupAlignmentX>("center");
-  let alignmentY = $state<MockupAlignmentY>("top");
+  let placement = $state<Placement>(DEFAULT_PLACEMENT);
   let scale = $state(1);
 
   // Runtime state
-  let mode = $state<MockupOverlayMode>("visible");
+  let interaction = $state<Interaction>(IDLE);
   let activeMockupUrl = $state<string | null>(null);
   let activeMockupMetadata = $state<Mockup | undefined>(undefined);
   let mockupSize = $state<Size>({ width: 0, height: 0 });
-  let bufferedPosition = $state<Position>({ x: 0, y: 0 });
-  let isZoomPanning = $state(false);
+  let pageSize = $state<Size>({ width: 0, height: 0 });
 
-  // Track mode before entering solid/zoomed to restore correctly
-  let modeBeforeSolid = $state<"visible" | "locked">("visible");
-
-  // Derived position display - uses $derived for proper reactivity tracking
-  // eslint-disable-next-line prefer-const
-  let positionDisplay = $derived.by(() => {
-    if (alignmentX === null && alignmentY === null) {
-      return `x:${Math.round(bufferedPosition.x)}, y:${Math.round(bufferedPosition.y)}`;
-    }
-    const parts: string[] = [];
-    if (alignmentY) parts.push(alignmentY);
-    if (alignmentX) parts.push(alignmentX);
-    return parts.join("·");
+  const mode = $derived(deriveMode(interaction, isLocked));
+  const placedPosition = $derived(resolvePosition(placement, mockupSize, scale, pageSize));
+  const transform = $derived.by((): View => {
+    if (interaction.kind === "dragging") return { ...interaction.current, scale };
+    if (interaction.kind === "inspecting" && interaction.view) return interaction.view;
+    return { ...placedPosition, scale };
   });
+  const position = $derived<Position>({ x: transform.x, y: transform.y });
+  const positionDisplay = $derived(describePlacement(placement, position));
 
   // Initialization
   let initialized = $state(false);
   let initPromise: Promise<void> | null = null;
 
-  // Drag state (not reactive)
-  let dragStart = { x: 0, y: 0 };
-  let initialPosition = { x: 0, y: 0 };
-
-  // Zoom state (not reactive)
-  let zoomInitialPosition = { x: 0, y: 0 };
-  let zoomMouseStart = { x: 0, y: 0 };
-  let preZoomScale = 1;
-  let preZoomPosition = { x: 0, y: 0 };
-
   // Incremented on every load so a slow, superseded load can't overwrite a newer one
   let loadToken = 0;
 
-  // Mobile touch state (not reactive)
-  let touchDragStart = { x: 0, y: 0 };
-  let touchInitialPosition = { x: 0, y: 0 };
+  // Gesture state (not reactive)
   let pinchStartDistance = 0;
-  let pinchStartScale = 1;
-  let pinchCenter = { x: 0, y: 0 }; // Fixed center point for pinch
-  let pinchStartPosition = { x: 0, y: 0 }; // Position at pinch start
-  let solidPanStart = { x: 0, y: 0 };
-  let solidPanInitialPosition = { x: 0, y: 0 };
-
-  // Snapshot taken when entering solid mode, restored on exit (desktop and mobile)
-  let preSolidScale = 1;
-  let preSolidPosition = { x: 0, y: 0 };
+  let pinchStartView: View = { x: 0, y: 0, scale: 1 };
+  let pinchCenter: Position = { x: 0, y: 0 };
+  let panStart: Position = { x: 0, y: 0 };
+  let panStartView: View = { x: 0, y: 0, scale: 1 };
 
   // ============================================
   // Internal helpers
@@ -139,9 +135,8 @@ function createMockupOverlayStore() {
         const img = new Image();
         img.onload = () => {
           if (token !== loadToken) return;
+          // The aligned position is derived from this size
           mockupSize = { width: img.naturalWidth, height: img.naturalHeight };
-          // The aligned position depends on the image size, which is only known now
-          updateAlignedPosition();
         };
         img.onerror = () => {
           if (token !== loadToken) return;
@@ -164,57 +159,50 @@ function createMockupOverlayStore() {
     }
   }
 
-  function updateAlignedPosition() {
-    if (alignmentX === null && alignmentY === null) return;
-
-    const { clientWidth, scrollHeight } = document.documentElement;
-    const scaledWidth = mockupSize.width * scale;
-    const scaledHeight = mockupSize.height * scale;
-
-    let newX = bufferedPosition.x;
-    let newY = bufferedPosition.y;
-
-    if (alignmentX !== null) {
-      switch (alignmentX) {
-        case "left":
-          newX = 0;
-          break;
-        case "center":
-          newX = ((clientWidth - scaledWidth) / 2) | 0;
-          break;
-        case "right":
-          newX = clientWidth - scaledWidth;
-          break;
-      }
-    }
-
-    if (alignmentY !== null) {
-      switch (alignmentY) {
-        case "top":
-          newY = 0;
-          break;
-        case "bottom":
-          newY = scrollHeight - scaledHeight;
-          break;
-      }
-    }
-
-    if (newX !== bufferedPosition.x || newY !== bufferedPosition.y) {
-      bufferedPosition = { x: newX, y: newY };
-      persistedPosition = { x: newX, y: newY };
-      updateSetting("mockupOverlay", "position", { ...persistedPosition }).catch(toastStore.showError);
-    }
+  function persist<K extends keyof MockupOverlaySettings>(key: K, value: MockupOverlaySettings[K]) {
+    updateSetting("mockupOverlay", key, value).catch(toastStore.showError);
   }
 
-  function clearAlignmentInternal() {
-    if (alignmentX !== null || alignmentY !== null) {
-      alignmentX = null;
-      alignmentY = null;
-      Promise.all([
-        updateSetting("mockupOverlay", "alignmentX", null),
-        updateSetting("mockupOverlay", "alignmentY", null)
-      ]).catch(toastStore.showError);
-    }
+  function persistAlignment() {
+    persist("alignmentX", getAlignmentX(placement));
+    persist("alignmentY", getAlignmentY(placement));
+  }
+
+  /** Pin the mockup at a position, dropping any alignment */
+  function placeAt(newPosition: Position) {
+    const wasAligned = getIsAligned(placement);
+    placement = freePlacement(newPosition);
+    if (wasAligned) persistAlignment();
+  }
+
+  function setAlignmentAxes(x: MockupAlignmentX | undefined, y: MockupAlignmentY | undefined) {
+    // An axis that loses its alignment stays where it currently is
+    const current = placedPosition;
+    placement = {
+      x: x === undefined ? placement.x : x === null ? { offset: current.x } : { align: x },
+      y: y === undefined ? placement.y : y === null ? { offset: current.y } : { align: y }
+    };
+  }
+
+  /** The transform currently on screen, as the starting point for a gesture */
+  function currentView(): View {
+    return { ...transform };
+  }
+
+  function setView(view: View | null) {
+    if (interaction.kind !== "inspecting") return;
+    interaction = { ...interaction, view };
+  }
+
+  function enterInspection() {
+    interaction = { kind: "inspecting", view: null, zoom: null };
+  }
+
+  function exitInspection() {
+    if (interaction.kind !== "inspecting") return;
+
+    window.removeEventListener("mousemove", handleZoomModeMove);
+    interaction = IDLE;
   }
 
   // ============================================
@@ -222,61 +210,53 @@ function createMockupOverlayStore() {
   // ============================================
 
   function handleGlobalMouseMove(e: MouseEvent) {
-    if (mode !== "dragging") return;
+    if (interaction.kind !== "dragging") return;
 
-    const dx = e.clientX - dragStart.x;
-    const dy = e.clientY - dragStart.y;
-
-    bufferedPosition = {
-      x: initialPosition.x + dx,
-      y: initialPosition.y + dy
+    const { pointerStart, origin } = interaction;
+    interaction = {
+      ...interaction,
+      current: { x: origin.x + e.clientX - pointerStart.x, y: origin.y + e.clientY - pointerStart.y }
     };
+  }
+
+  function endDrag() {
+    if (interaction.kind !== "dragging") return;
+
+    const finalPosition = interaction.current;
+    interaction = IDLE;
+    placeAt(finalPosition);
+    persist("position", { ...finalPosition });
   }
 
   function handleGlobalMouseUp() {
-    if (mode !== "dragging") return;
+    if (interaction.kind !== "dragging") return;
 
     window.removeEventListener("mousemove", handleGlobalMouseMove);
     window.removeEventListener("mouseup", handleGlobalMouseUp);
-
-    mode = "visible";
-    clearAlignmentInternal();
-
-    persistedPosition = { ...bufferedPosition };
-    updateSetting("mockupOverlay", "position", { ...persistedPosition }).catch(toastStore.showError);
+    endDrag();
   }
 
   function handleZoomModeMove(e: MouseEvent) {
-    if (mode !== "zoomed") return;
+    if (interaction.kind !== "inspecting" || !interaction.zoom || !interaction.view) return;
 
-    if (!isZoomPanning) {
-      isZoomPanning = true;
-    }
-
-    const dx = e.clientX - zoomMouseStart.x;
-    const dy = e.clientY - zoomMouseStart.y;
-
-    bufferedPosition = {
-      x: zoomInitialPosition.x - dx,
-      y: zoomInitialPosition.y - dy
+    // Inverse direction: moving the mouse pans the viewport over the zoomed mockup
+    const { zoom, view } = interaction;
+    interaction = {
+      ...interaction,
+      zoom: { ...zoom, isPanning: true },
+      view: {
+        ...view,
+        x: zoom.origin.x - (e.clientX - zoom.pointerStart.x),
+        y: zoom.origin.y - (e.clientY - zoom.pointerStart.y)
+      }
     };
   }
 
-  function enterInspection() {
-    modeBeforeSolid = mode as "visible" | "locked";
-    preSolidScale = scale;
-    preSolidPosition = { ...bufferedPosition };
-    mode = "solid";
-  }
-
-  function exitInspection() {
-    if (mode !== "solid" && mode !== "zoomed") return;
-
-    window.removeEventListener("mousemove", handleZoomModeMove);
-    isZoomPanning = false;
-    scale = preSolidScale;
-    bufferedPosition = { ...preSolidPosition };
-    mode = modeBeforeSolid;
+  /** Scale around the pinch center captured at the start of the pinch */
+  function applyPinch(scaleFactor: number) {
+    const newScale = clamp(pinchStartView.scale * scaleFactor, PINCH_SCALE_MIN, PINCH_SCALE_MAX);
+    const newPosition = focusPoint(pinchStartView, pinchStartView.scale, newScale, pinchCenter);
+    setView({ ...newPosition, scale: newScale });
   }
 
   // ============================================
@@ -307,25 +287,25 @@ function createMockupOverlayStore() {
       return opacity;
     },
     get position() {
-      return bufferedPosition;
+      return position;
     },
     get alignmentX() {
-      return alignmentX;
+      return getAlignmentX(placement);
     },
     get alignmentY() {
-      return alignmentY;
+      return getAlignmentY(placement);
     },
     get isAligned() {
-      return alignmentX !== null || alignmentY !== null;
+      return getIsAligned(placement);
     },
     get scale() {
-      return scale;
+      return transform.scale;
     },
     get mode() {
       return mode;
     },
     get isZoomPanning() {
-      return isZoomPanning;
+      return interaction.kind === "inspecting" && !!interaction.zoom?.isPanning;
     },
     get isDragging() {
       return mode === "dragging";
@@ -358,17 +338,10 @@ function createMockupOverlayStore() {
           if (settings.isHidden !== undefined) isHidden = settings.isHidden;
           if (settings.isLocked !== undefined) isLocked = settings.isLocked;
           if (settings.opacity !== undefined) opacity = settings.opacity;
-          if (settings.position !== undefined) {
-            persistedPosition = settings.position;
-            bufferedPosition = { ...settings.position };
-          }
-          if (settings.alignmentX !== undefined) alignmentX = settings.alignmentX;
-          if (settings.alignmentY !== undefined) alignmentY = settings.alignmentY;
           if (settings.scale !== undefined) scale = settings.scale;
+          placementFromStored(settings);
 
           await loadMockup(activeId);
-          mode = isLocked ? "locked" : "visible";
-          modeBeforeSolid = mode;
         } catch (e) {
           toastStore.showError(e, "Failed to load mockup overlay settings");
         } finally {
@@ -380,6 +353,11 @@ function createMockupOverlayStore() {
       return initPromise;
     },
 
+    /** The page area the mockup aligns to; kept up to date by the overlay component */
+    setPageSize: (size: Size) => {
+      if (size.width !== pageSize.width || size.height !== pageSize.height) pageSize = size;
+    },
+
     // ============================================
     // Mockup management
     // ============================================
@@ -388,26 +366,22 @@ function createMockupOverlayStore() {
       activeId = id;
       loadMockup(id);
 
-      const updates: Promise<void>[] = [updateSetting("mockupOverlay", "activeMockupId", id)];
+      persist("activeMockupId", id);
 
       if (id) {
         if (isHidden) {
           isHidden = false;
-          updates.push(updateSetting("mockupOverlay", "isHidden", false));
+          persist("isHidden", false);
         }
         if (isLocked) {
           isLocked = false;
-          mode = "visible";
-          modeBeforeSolid = "visible";
-          updates.push(updateSetting("mockupOverlay", "isLocked", false));
+          persist("isLocked", false);
         }
       }
-
-      Promise.all(updates).catch(toastStore.showError);
     },
 
     // ============================================
-    // Visibility & Lock (only in visible/locked mode)
+    // Visibility & Lock
     // ============================================
     // Settings use fire-and-forget pattern: local state updates immediately,
     // persistence failure only shows error (recoverable on next session)
@@ -417,17 +391,14 @@ function createMockupOverlayStore() {
       exitInspection();
 
       isHidden = !isHidden;
-      updateSetting("mockupOverlay", "isHidden", isHidden).catch(toastStore.showError);
+      persist("isHidden", isHidden);
     },
 
     toggleLock: () => {
-      // Can only toggle lock in visible or locked mode
-      if (mode !== "visible" && mode !== "locked") return;
+      if (!can.adjustAppearance(mode)) return;
 
       isLocked = !isLocked;
-      mode = isLocked ? "locked" : "visible";
-      modeBeforeSolid = mode;
-      updateSetting("mockupOverlay", "isLocked", isLocked).catch(toastStore.showError);
+      persist("isLocked", isLocked);
     },
 
     // ============================================
@@ -435,19 +406,28 @@ function createMockupOverlayStore() {
     // ============================================
 
     adjustOpacity: (direction: number) => {
-      if (mode !== "visible" && mode !== "locked") return;
+      if (!can.adjustAppearance(mode)) return;
 
       const delta = direction > 0 ? -OPACITY_STEP : OPACITY_STEP;
-      const newOpacity = roundTo(opacity + delta, 2);
-      opacity = clamp(newOpacity, OPACITY_MIN, OPACITY_MAX);
-      updateSetting("mockupOverlay", "opacity", opacity).catch(toastStore.showError);
+      opacity = clamp(roundTo(opacity + delta, 2), OPACITY_MIN, OPACITY_MAX);
+      persist("opacity", opacity);
     },
 
     resetOpacity: () => {
-      if (mode !== "visible" && mode !== "locked") return;
+      if (!can.adjustAppearance(mode)) return;
 
       opacity = OPACITY_DEFAULT;
-      updateSetting("mockupOverlay", "opacity", opacity).catch(toastStore.showError);
+      persist("opacity", opacity);
+    },
+
+    /**
+     * Set opacity directly (for mobile slider)
+     */
+    setOpacity: (value: number) => {
+      if (!can.adjustAppearance(mode)) return;
+
+      opacity = clamp(roundTo(value, 2), OPACITY_MIN, OPACITY_MAX);
+      persist("opacity", opacity);
     },
 
     // ============================================
@@ -455,31 +435,19 @@ function createMockupOverlayStore() {
     // ============================================
 
     cycleScale: () => {
-      if (mode !== "visible") return;
+      if (!can.reposition(mode)) return;
 
-      const oldScale = scale;
-      const currentIndex = SCALE_OPTIONS.indexOf(oldScale as (typeof SCALE_OPTIONS)[number]);
-      const nextIndex = (currentIndex + 1) % SCALE_OPTIONS.length;
-      const newScale = SCALE_OPTIONS[nextIndex >= 0 ? nextIndex : 0];
+      const currentIndex = SCALE_OPTIONS.indexOf(scale as (typeof SCALE_OPTIONS)[number]);
+      const newScale = SCALE_OPTIONS[(currentIndex + 1) % SCALE_OPTIONS.length];
 
-      const { clientWidth, clientHeight } = document.documentElement;
-      const centerX = window.scrollX + clientWidth / 2;
-      const centerY = window.scrollY + clientHeight / 2;
-
-      const { x, y } = bufferedPosition;
-
-      const newX = centerX - ((centerX - x) / oldScale) * newScale;
-      const newY = centerY - ((centerY - y) / oldScale) * newScale;
+      // Keep the point at the center of the viewport fixed
+      const center = readViewportCenter();
+      const newPosition = focusPoint(placedPosition, scale, newScale, center);
 
       scale = newScale;
-      bufferedPosition = { x: newX, y: newY };
-      persistedPosition = { x: newX, y: newY };
-
-      clearAlignmentInternal();
-      Promise.all([
-        updateSetting("mockupOverlay", "scale", scale),
-        updateSetting("mockupOverlay", "position", { ...persistedPosition })
-      ]).catch(toastStore.showError);
+      placeAt(newPosition);
+      persist("scale", scale);
+      persist("position", { ...newPosition });
     },
 
     // ============================================
@@ -487,58 +455,43 @@ function createMockupOverlayStore() {
     // ============================================
 
     setAlignmentX: (value: MockupAlignmentX) => {
-      if (mode !== "visible") return;
+      if (!can.reposition(mode)) return;
 
-      alignmentX = value;
-      updateSetting("mockupOverlay", "alignmentX", value).catch(toastStore.showError);
-      updateAlignedPosition();
+      setAlignmentAxes(value, undefined);
+      persist("alignmentX", value);
     },
 
     setAlignmentY: (value: MockupAlignmentY) => {
-      if (mode !== "visible") return;
+      if (!can.reposition(mode)) return;
 
-      alignmentY = value;
-      updateSetting("mockupOverlay", "alignmentY", value).catch(toastStore.showError);
-      updateAlignedPosition();
+      setAlignmentAxes(undefined, value);
+      persist("alignmentY", value);
     },
 
     setAlignment: (y: MockupAlignmentY, x: MockupAlignmentX) => {
-      if (mode !== "visible") return;
+      if (!can.reposition(mode)) return;
 
-      alignmentY = y;
-      alignmentX = x;
-      Promise.all([
-        updateSetting("mockupOverlay", "alignmentY", y),
-        updateSetting("mockupOverlay", "alignmentX", x)
-      ]).catch(toastStore.showError);
-      updateAlignedPosition();
+      setAlignmentAxes(x, y);
+      persistAlignment();
     },
 
     clearAlignment: () => {
-      if (mode !== "visible") return;
-      clearAlignmentInternal();
+      if (!can.reposition(mode)) return;
+      placeAt(placedPosition);
     },
-
-    updateAlignedPosition,
 
     // ============================================
     // Movement (only in visible mode)
     // ============================================
 
     move: (dx: number, dy: number) => {
-      if (mode !== "visible") return;
+      if (!can.reposition(mode)) return;
 
-      clearAlignmentInternal();
-
-      bufferedPosition = {
-        x: bufferedPosition.x + dx,
-        y: bufferedPosition.y + dy
-      };
+      placeAt({ x: placedPosition.x + dx, y: placedPosition.y + dy });
     },
 
     persistPosition: () => {
-      persistedPosition = { ...bufferedPosition };
-      updateSetting("mockupOverlay", "position", { ...persistedPosition }).catch(toastStore.showError);
+      persist("position", { ...placedPosition });
     },
 
     // ============================================
@@ -546,11 +499,14 @@ function createMockupOverlayStore() {
     // ============================================
 
     startDrag: (e: MouseEvent) => {
-      if (mode !== "visible") return;
+      if (!can.reposition(mode)) return;
 
-      mode = "dragging";
-      dragStart = { x: e.clientX, y: e.clientY };
-      initialPosition = { ...bufferedPosition };
+      interaction = {
+        kind: "dragging",
+        pointerStart: { x: e.clientX, y: e.clientY },
+        origin: { ...placedPosition },
+        current: { ...placedPosition }
+      };
 
       window.addEventListener("mousemove", handleGlobalMouseMove);
       window.addEventListener("mouseup", handleGlobalMouseUp);
@@ -561,8 +517,7 @@ function createMockupOverlayStore() {
     // ============================================
 
     enterSolidMode: () => {
-      if (mode !== "visible" && mode !== "locked") return;
-
+      if (!can.adjustAppearance(mode)) return;
       enterInspection();
     },
 
@@ -573,49 +528,32 @@ function createMockupOverlayStore() {
     // ============================================
 
     enterZoomMode: (e: MouseEvent) => {
-      if (mode !== "solid") return;
+      if (interaction.kind !== "inspecting" || !can.zoom(mode)) return;
 
-      mode = "zoomed";
-      preZoomScale = scale;
-      preZoomPosition = { ...bufferedPosition };
-      const zoomScale = scale * ZOOM_FACTOR;
-      scale = zoomScale;
+      const from = currentView();
+      const zoomScale = from.scale * ZOOM_FACTOR;
+      // Bring the clicked mockup point to the center of the viewport
+      const zoomed = focusPoint(from, from.scale, zoomScale, toPagePoint(e.clientX, e.clientY), readViewportCenter());
 
-      const { clientX, clientY } = e;
-      const { x, y } = bufferedPosition;
-
-      const pageX = clientX + window.scrollX;
-      const pageY = clientY + window.scrollY;
-
-      // Calculate point on mockup that was clicked
-      const mockupPointX = (pageX - x) / preZoomScale;
-      const mockupPointY = (pageY - y) / preZoomScale;
-
-      // Calculate screen center
-      const { clientWidth, clientHeight } = document.documentElement;
-      const centerX = window.scrollX + clientWidth / 2;
-      const centerY = window.scrollY + clientHeight / 2;
-
-      // Position mockup so clicked point is at screen center
-      zoomInitialPosition = {
-        x: centerX - mockupPointX * zoomScale,
-        y: centerY - mockupPointY * zoomScale
+      interaction = {
+        kind: "inspecting",
+        view: { ...zoomed, scale: zoomScale },
+        zoom: {
+          returnTo: interaction.view,
+          pointerStart: { x: e.clientX, y: e.clientY },
+          origin: zoomed,
+          isPanning: false
+        }
       };
-      zoomMouseStart = { x: clientX, y: clientY };
-
-      bufferedPosition = { ...zoomInitialPosition };
 
       window.addEventListener("mousemove", handleZoomModeMove);
     },
 
     exitZoomMode: () => {
-      if (mode !== "zoomed") return;
+      if (interaction.kind !== "inspecting" || !interaction.zoom) return;
 
       window.removeEventListener("mousemove", handleZoomModeMove);
-      mode = "solid";
-      scale = preZoomScale;
-      bufferedPosition = { ...preZoomPosition };
-      isZoomPanning = false;
+      interaction = { kind: "inspecting", view: interaction.zoom.returnTo, zoom: null };
     },
 
     // ============================================
@@ -632,64 +570,42 @@ function createMockupOverlayStore() {
     // ============================================
     // Mobile Touch Methods
     // ============================================
-    // Mobile state machine (simplified):
-    // - visible ⇄ locked ⇄ dragging ⇄ solid (with pinch zoom)
-    // - No zoomed state on mobile
-    // - Double tap to toggle solid mode
-    // - Single finger drag in visible mode
-    // - Pinch to zoom in solid mode
-    // - Single finger pan in solid mode (follows finger direction)
-
-    /**
-     * Set opacity directly (for mobile slider)
-     */
-    setOpacity: (value: number) => {
-      if (mode !== "visible" && mode !== "locked") return;
-
-      opacity = clamp(roundTo(value, 2), OPACITY_MIN, OPACITY_MAX);
-      updateSetting("mockupOverlay", "opacity", opacity).catch(toastStore.showError);
-    },
+    // Mobile: no zoomed state; double tap toggles solid mode, in which
+    // pinch zooms and a single finger pans (following the finger)
 
     /**
      * Start touch drag (visible mode only)
      */
     startTouchDrag: (e: TouchEvent) => {
-      if (mode !== "visible") return;
+      if (!can.reposition(mode)) return;
 
       const touch = e.touches[0];
-      mode = "dragging";
-      touchDragStart = { x: touch.clientX, y: touch.clientY };
-      touchInitialPosition = { ...bufferedPosition };
+      interaction = {
+        kind: "dragging",
+        pointerStart: { x: touch.clientX, y: touch.clientY },
+        origin: { ...placedPosition },
+        current: { ...placedPosition }
+      };
     },
 
     /**
      * Handle touch drag movement
      */
     handleTouchDrag: (e: TouchEvent) => {
-      if (mode !== "dragging") return;
+      if (interaction.kind !== "dragging") return;
 
       const touch = e.touches[0];
-      const dx = touch.clientX - touchDragStart.x;
-      const dy = touch.clientY - touchDragStart.y;
-
-      bufferedPosition = {
-        x: touchInitialPosition.x + dx,
-        y: touchInitialPosition.y + dy
+      const { pointerStart, origin } = interaction;
+      interaction = {
+        ...interaction,
+        current: { x: origin.x + touch.clientX - pointerStart.x, y: origin.y + touch.clientY - pointerStart.y }
       };
     },
 
     /**
      * End touch drag - persist position
      */
-    endTouchDrag: () => {
-      if (mode !== "dragging") return;
-
-      mode = "visible";
-      clearAlignmentInternal();
-
-      persistedPosition = { ...bufferedPosition };
-      updateSetting("mockupOverlay", "position", { ...persistedPosition }).catch(toastStore.showError);
-    },
+    endTouchDrag: endDrag,
 
     /**
      * Toggle solid mode on mobile (double tap)
@@ -697,7 +613,7 @@ function createMockupOverlayStore() {
     toggleMobileSolidMode: () => {
       if (mode === "solid") {
         exitInspection();
-      } else if (mode === "visible" || mode === "locked") {
+      } else if (can.adjustAppearance(mode)) {
         enterInspection();
       }
     },
@@ -708,20 +624,14 @@ function createMockupOverlayStore() {
     startPinch: (e: TouchEvent) => {
       if (mode !== "solid" || e.touches.length < 2) return;
 
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const dx = touch2.clientX - touch1.clientX;
-      const dy = touch2.clientY - touch1.clientY;
+      const a = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      const b = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+      const center = midpoint(a, b);
 
-      pinchStartDistance = Math.sqrt(dx * dx + dy * dy);
-      pinchStartScale = scale;
-      pinchStartPosition = { ...bufferedPosition };
-
+      pinchStartDistance = distance(a, b);
+      pinchStartView = currentView();
       // Fix the center point at pinch start (in page coordinates)
-      pinchCenter = {
-        x: (touch1.clientX + touch2.clientX) / 2 + window.scrollX,
-        y: (touch1.clientY + touch2.clientY) / 2 + window.scrollY
-      };
+      pinchCenter = toPagePoint(center.x, center.y);
     },
 
     /**
@@ -730,26 +640,9 @@ function createMockupOverlayStore() {
     handlePinch: (e: TouchEvent) => {
       if (mode !== "solid" || e.touches.length < 2 || pinchStartDistance === 0) return;
 
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const dx = touch2.clientX - touch1.clientX;
-      const dy = touch2.clientY - touch1.clientY;
-
-      const currentDistance = Math.sqrt(dx * dx + dy * dy);
-      const scaleRatio = currentDistance / pinchStartDistance;
-      const newScale = clamp(pinchStartScale * scaleRatio, 0.25, 4);
-
-      // Calculate the point on the mockup that was at the pinch center
-      const pointX = (pinchCenter.x - pinchStartPosition.x) / pinchStartScale;
-      const pointY = (pinchCenter.y - pinchStartPosition.y) / pinchStartScale;
-
-      // Keep that point at the same screen position
-      bufferedPosition = {
-        x: pinchCenter.x - pointX * newScale,
-        y: pinchCenter.y - pointY * newScale
-      };
-
-      scale = newScale;
+      const a = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      const b = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+      applyPinch(distance(a, b) / pinchStartDistance);
     },
 
     /**
@@ -757,13 +650,11 @@ function createMockupOverlayStore() {
      */
     endPinch: () => {
       pinchStartDistance = 0;
-      pinchStartScale = scale;
     },
 
     // ============================================
     // Safari Gesture Events (preferred on iOS/Safari)
     // ============================================
-    // These events provide e.scale directly, smoother than calculating from touch points
 
     /**
      * Start gesture pinch (Safari Gesture Events)
@@ -773,8 +664,7 @@ function createMockupOverlayStore() {
     startGesturePinch: (centerX: number, centerY: number) => {
       if (mode !== "solid") return;
 
-      pinchStartScale = scale;
-      pinchStartPosition = { ...bufferedPosition };
+      pinchStartView = currentView();
       pinchCenter = { x: centerX, y: centerY };
     },
 
@@ -784,20 +674,7 @@ function createMockupOverlayStore() {
      */
     handleGesturePinch: (gestureScale: number) => {
       if (mode !== "solid") return;
-
-      const newScale = clamp(pinchStartScale * gestureScale, 0.25, 4);
-
-      // Calculate the point on the mockup that was at the pinch center
-      const pointX = (pinchCenter.x - pinchStartPosition.x) / pinchStartScale;
-      const pointY = (pinchCenter.y - pinchStartPosition.y) / pinchStartScale;
-
-      // Keep that point at the same screen position
-      bufferedPosition = {
-        x: pinchCenter.x - pointX * newScale,
-        y: pinchCenter.y - pointY * newScale
-      };
-
-      scale = newScale;
+      applyPinch(gestureScale);
     },
 
     /**
@@ -807,8 +684,8 @@ function createMockupOverlayStore() {
       if (mode !== "solid") return;
 
       const touch = e.touches[0];
-      solidPanStart = { x: touch.clientX, y: touch.clientY };
-      solidPanInitialPosition = { ...bufferedPosition };
+      panStart = { x: touch.clientX, y: touch.clientY };
+      panStartView = currentView();
     },
 
     /**
@@ -818,16 +695,22 @@ function createMockupOverlayStore() {
       if (mode !== "solid") return;
 
       const touch = e.touches[0];
-      const dx = touch.clientX - solidPanStart.x;
-      const dy = touch.clientY - solidPanStart.y;
-
-      // Same direction - finger moves up, image moves up
-      bufferedPosition = {
-        x: solidPanInitialPosition.x + dx,
-        y: solidPanInitialPosition.y + dy
-      };
+      setView({
+        ...panStartView,
+        x: panStartView.x + touch.clientX - panStart.x,
+        y: panStartView.y + touch.clientY - panStart.y
+      });
     }
   };
+
+  function placementFromStored(settings: Partial<MockupOverlaySettings>) {
+    const storedPosition = settings.position ?? { x: 0, y: 0 };
+    placement = placementFromSettings(
+      settings.alignmentX === undefined ? getAlignmentX(DEFAULT_PLACEMENT) : settings.alignmentX,
+      settings.alignmentY === undefined ? getAlignmentY(DEFAULT_PLACEMENT) : settings.alignmentY,
+      storedPosition
+    );
+  }
 }
 
 export const mockupOverlayStore = createMockupOverlayStore();

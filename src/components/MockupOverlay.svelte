@@ -11,10 +11,10 @@
   import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
 
   // Utils
+  import { observePageSize } from "~/platform/viewport";
   import { initInputTypeTracking, updateInputType } from "~/utils/device";
 
-  // Debounce timer for resize events
-  let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  let stopObservingPageSize: (() => void) | null = null;
 
   // Pointer state for unified handling
   let activePointerId: number | null = null;
@@ -108,14 +108,13 @@
     initInputTypeTracking();
     mockupOverlayStore.init();
     keyboardStore.init();
-    window.addEventListener("resize", handleResize);
+    stopObservingPageSize = observePageSize(mockupOverlayStore.setPageSize);
     document.addEventListener("visibilitychange", handleVisibilityChange);
   });
 
   onDestroy(() => {
-    window.removeEventListener("resize", handleResize);
+    stopObservingPageSize?.();
     document.removeEventListener("visibilitychange", handleVisibilityChange);
-    if (resizeTimer) clearTimeout(resizeTimer);
 
     // Clean up gesture listeners and state
     removeGestureListeners();
@@ -155,16 +154,6 @@
         imgElement = null;
       }
     };
-  }
-
-  function handleResize() {
-    if (!mockupOverlayStore.isAligned) return;
-
-    // Debounce resize events to avoid excessive updates
-    if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      mockupOverlayStore.updateAlignedPosition();
-    }, 100);
   }
 
   /**
@@ -454,6 +443,7 @@
       style:cursor={interactionStyles.cursor}
       style:pointer-events={interactionStyles.pointerEvents}
       style:opacity={mockupOverlayStore.effectiveOpacity}
+      style:visibility={mockupOverlayStore.mockupSize.width ? undefined : "hidden"}
       style:touch-action={touchAction}
       onpointerdown={handlePointerDown}
       onpointermove={handlePointerMove}

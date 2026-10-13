@@ -699,7 +699,7 @@ describe("mockupOverlayStore", () => {
       vi.stubGlobal("Image", FakeImage);
       let urlCount = 0;
       vi.mocked(URL.createObjectURL).mockImplementation(() => `blob:url-${++urlCount}`);
-      Object.defineProperty(document.documentElement, "clientWidth", { value: 1024, configurable: true });
+      mockupOverlayStore.setPageSize({ width: 1024, height: 3000 });
     });
 
     afterEach(() => {
@@ -761,6 +761,89 @@ describe("mockupOverlayStore", () => {
 
       expect(mockupOverlayStore.activeMockupUrl).toBe(url);
       expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(url);
+    });
+  });
+
+  describe("derived position", () => {
+    class FakeImage {
+      onload: (() => void) | null = null;
+      naturalWidth = 800;
+      naturalHeight = 1500;
+      set src(_url: string) {
+        setTimeout(() => this.onload?.(), 0);
+      }
+    }
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+    beforeEach(async () => {
+      vi.stubGlobal("Image", FakeImage);
+      getMockup.mockResolvedValue({ id: "a", originalBuffer: new ArrayBuffer(1), mimeType: "image/png" });
+      await mockupOverlayStore.init();
+      mockupOverlayStore.setActiveMockup("a");
+      await flush();
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("follows the page width while centered", () => {
+      mockupOverlayStore.setPageSize({ width: 1024, height: 3000 });
+      expect(mockupOverlayStore.position.x).toBe(112);
+
+      mockupOverlayStore.setPageSize({ width: 1440, height: 3000 });
+      expect(mockupOverlayStore.position.x).toBe(320);
+    });
+
+    it("stays at the bottom when the document grows", () => {
+      mockupOverlayStore.setAlignmentY("bottom");
+
+      mockupOverlayStore.setPageSize({ width: 1024, height: 3000 });
+      expect(mockupOverlayStore.position.y).toBe(1500);
+
+      mockupOverlayStore.setPageSize({ width: 1024, height: 5000 });
+      expect(mockupOverlayStore.position.y).toBe(3500);
+    });
+
+    it("keeps a freely placed mockup where it is when the page resizes", () => {
+      mockupOverlayStore.setPageSize({ width: 1024, height: 3000 });
+      mockupOverlayStore.move(5, 5);
+
+      mockupOverlayStore.setPageSize({ width: 1440, height: 3000 });
+
+      expect(mockupOverlayStore.position).toEqual({ x: 117, y: 5 });
+    });
+
+    it("keeps the current coordinate of an axis whose alignment is cleared", () => {
+      mockupOverlayStore.setPageSize({ width: 1024, height: 3000 });
+
+      mockupOverlayStore.setAlignmentX(null);
+      mockupOverlayStore.setPageSize({ width: 1440, height: 3000 });
+
+      expect(mockupOverlayStore.position.x).toBe(112);
+      expect(mockupOverlayStore.alignmentY).toBe("top");
+    });
+  });
+
+  describe("zoom from a pinched view", () => {
+    it("returns to the pinched view when leaving zoom, and to the placement when leaving solid", () => {
+      Object.defineProperty(window, "scrollX", { value: 0, configurable: true });
+      Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+      mockupOverlayStore.enterSolidMode();
+      mockupOverlayStore.startGesturePinch(0, 0);
+      mockupOverlayStore.handleGesturePinch(1.5);
+      const pinched = { position: { ...mockupOverlayStore.position }, scale: mockupOverlayStore.scale };
+
+      mockupOverlayStore.enterZoomMode(new MouseEvent("pointerdown", { clientX: 10, clientY: 10 }));
+      expect(mockupOverlayStore.scale).toBe(3);
+      mockupOverlayStore.exitZoomMode();
+
+      expect(mockupOverlayStore.scale).toBe(pinched.scale);
+      expect(mockupOverlayStore.position).toEqual(pinched.position);
+
+      mockupOverlayStore.exitSolidMode();
+      expect(mockupOverlayStore.scale).toBe(1);
+      expect(mockupOverlayStore.mode).toBe("visible");
     });
   });
 

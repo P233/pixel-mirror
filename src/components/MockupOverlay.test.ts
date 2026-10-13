@@ -29,7 +29,8 @@ vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
     startDrag: vi.fn(),
     enterZoomMode: vi.fn(),
     exitZoomMode: vi.fn(),
-    updateAlignedPosition: vi.fn(),
+    setPageSize: vi.fn(),
+    mockupSize: { width: 800, height: 1500 },
     // Touch methods
     startTouchDrag: vi.fn(),
     handleTouchDrag: vi.fn(),
@@ -83,7 +84,8 @@ const mockMockupStore = mockupOverlayStore as unknown as {
   startDrag: ReturnType<typeof vi.fn>;
   enterZoomMode: ReturnType<typeof vi.fn>;
   exitZoomMode: ReturnType<typeof vi.fn>;
-  updateAlignedPosition: ReturnType<typeof vi.fn>;
+  setPageSize: ReturnType<typeof vi.fn>;
+  mockupSize: Size;
   // Touch methods
   startTouchDrag: ReturnType<typeof vi.fn>;
   handleTouchDrag: ReturnType<typeof vi.fn>;
@@ -278,6 +280,30 @@ describe("MockupOverlay component", () => {
       unmount();
 
       expect(mockKeyboardStore.cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports the page size to the store on mount and on resize", () => {
+      Object.defineProperty(document.documentElement, "clientWidth", { value: 1024, configurable: true });
+      Object.defineProperty(document.documentElement, "scrollHeight", { value: 3000, configurable: true });
+      const { unmount } = render(MockupOverlay);
+      expect(mockMockupStore.setPageSize).toHaveBeenLastCalledWith({ width: 1024, height: 3000 });
+
+      Object.defineProperty(document.documentElement, "clientWidth", { value: 1440, configurable: true });
+      window.dispatchEvent(new Event("resize"));
+      expect(mockMockupStore.setPageSize).toHaveBeenLastCalledWith({ width: 1440, height: 3000 });
+
+      unmount();
+      mockMockupStore.setPageSize.mockClear();
+      window.dispatchEvent(new Event("resize"));
+      expect(mockMockupStore.setPageSize).not.toHaveBeenCalled();
+    });
+
+    it("keeps the image hidden until its size (and so its aligned position) is known", async () => {
+      mockMockupStore.mockupSize = { width: 0, height: 0 };
+      const { container } = render(MockupOverlay);
+
+      expect(container.querySelector<HTMLImageElement>(".mockup-overlay")?.style.visibility).toBe("hidden");
+      mockMockupStore.mockupSize = { width: 800, height: 1500 };
     });
   });
 
