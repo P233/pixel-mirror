@@ -76,6 +76,8 @@ describe("validation utilities", () => {
       ["#ffffffff", "#ffffffff"], // 8-char hex with alpha
       ["rgb(255, 0, 0)", "rgb(255, 0, 0)"],
       ["rgba(255, 0, 0, 0.5)", "rgba(255, 0, 0, 0.5)"],
+      ["red", "red"], // named colors
+      ["hsl(0 100% 50% / 0.1)", "hsl(0 100% 50% / 0.1)"],
       ["  #fff  ", "#fff"] // trims whitespace
     ])("validates '%s' as valid color", (input, expected) => {
       const result = validateColor(input, "test");
@@ -88,11 +90,10 @@ describe("validation utilities", () => {
     it.each([
       ["", "is required"],
       ["   ", "is required"],
-      ["red", "Invalid"], // named colors not supported
+      ["banana", "Invalid"], // not a color
       ["#gg0000", "Invalid"], // invalid hex chars
       ["#ff", "Invalid"], // too short
-      ["rgb()", "Invalid"], // empty rgb
-      ["hsl(0, 100%, 50%)", "Invalid"] // hsl not supported
+      ["rgb()", "Invalid"] // empty rgb
     ])("rejects '%s' as invalid color", (input, expectedError) => {
       const result = validateColor(input, "Color");
       expect(result.success).toBe(false);

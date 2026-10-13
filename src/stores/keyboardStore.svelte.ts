@@ -43,10 +43,10 @@ function createKeyboardStore() {
    * Check if mockup overlay events should be active
    * Events are only active when:
    * - Dock is in toolbar mode
-   * - Mockup is not hidden
+   * - A mockup is loaded and not hidden
    */
   function shouldHandleMockupEvents(): boolean {
-    return dockStore.mode === "toolbar" && !mockupOverlayStore.isHidden;
+    return dockStore.mode === "toolbar" && !mockupOverlayStore.isHidden && !!mockupOverlayStore.activeMockupUrl;
   }
 
   /**
@@ -193,7 +193,7 @@ function createKeyboardStore() {
       case "ArrowLeft":
       case "ArrowRight":
         // Persist position after arrow key movement
-        if (mockupOverlayStore.mode === "visible") {
+        if (shouldHandleMockupEvents() && mockupOverlayStore.mode === "visible") {
           mockupOverlayStore.persistPosition();
         }
         break;

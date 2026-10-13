@@ -1,6 +1,6 @@
 <script lang="ts">
   // Svelte
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
 
   // Stores
   import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
@@ -8,10 +8,6 @@
 
   onMount(() => {
     gridOverlayStore.init();
-  });
-
-  onDestroy(() => {
-    gridOverlayStore.cleanup();
   });
 
   let isGridVisible = $derived(!mockupOverlayStore.isSolidOrZoomed);

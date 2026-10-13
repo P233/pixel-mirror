@@ -115,4 +115,14 @@ describe("toastStore", () => {
       consoleSpy.mockRestore();
     });
   });
+
+  it("does not intercept the host page's unhandled promise rejections", () => {
+    const event = new Event("unhandledrejection", { cancelable: true });
+    Object.assign(event, { reason: new Error("host app bug") });
+
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(toastStore.errorMessage).toBeUndefined();
+  });
 });

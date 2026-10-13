@@ -4,8 +4,6 @@
 
 import { normalizeError } from "~/utils/errors";
 
-let unhandledRejectionListenerAdded = false;
-
 function createToastStore() {
   let currentMessage = $state<string | undefined>(undefined);
 
@@ -14,15 +12,6 @@ function createToastStore() {
     currentMessage = appError.message;
     console.error("[PixelMirror]", appError.message, appError.details ?? "");
   };
-
-  // Global error handler for unhandled Promise rejections
-  if (typeof window !== "undefined" && !unhandledRejectionListenerAdded) {
-    unhandledRejectionListenerAdded = true;
-    window.addEventListener("unhandledrejection", (e) => {
-      e.preventDefault();
-      showError(e.reason);
-    });
-  }
 
   return {
     get errorMessage() {

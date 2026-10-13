@@ -5,6 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ValidationError } from "~/utils/errors";
 
 // Mock database
 vi.mock("./database", () => ({
@@ -136,6 +137,25 @@ describe("mockupManagerStore", () => {
       await mockupManagerStore.upload([]);
 
       expect(generateMockupBuffers).not.toHaveBeenCalled();
+    });
+
+    it("reports every failed file in a single toast", async () => {
+      const files = [new File(["a"], "a.txt"), new File(["b"], "b.bmp")];
+      generateMockupBuffers.mockResolvedValue({
+        data: [],
+        errors: [
+          new ValidationError("a.txt: Unsupported file type"),
+          new ValidationError("b.bmp: Unsupported file type")
+        ]
+      });
+
+      await mockupManagerStore.upload(files);
+
+      expect(toastStore.showError).toHaveBeenCalledTimes(1);
+      const [error] = toastStore.showError.mock.calls[0];
+      expect(error.message).toContain("2 files could not be added");
+      expect(error.message).toContain("a.txt");
+      expect(error.message).toContain("b.bmp");
     });
 
     it("processes files and adds to database", async () => {

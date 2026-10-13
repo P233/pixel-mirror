@@ -9,15 +9,18 @@
   import { dockStore } from "~/stores/dockStore.svelte";
   import { gridManagerStore } from "~/stores/gridManagerStore.svelte";
   import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
+  // Utils
+  import { withDefaultUnit } from "~/utils/validation";
 
   onMount(() => {
     gridManagerStore.init();
   });
 
-  // Input states for editable fields - synced from store on initialization
-  let spacingGridHeightInput = $state(gridOverlayStore.spacingGridHeight);
-  let spacingGridColorInput = $state(gridOverlayStore.spacingGridColor);
-  let layoutGridColorInput = $state(gridOverlayStore.layoutGridColor);
+  // Editable drafts: each resets only when its own store value changes (e.g., after save or reset),
+  // so saving one field doesn't discard unsaved edits in the others
+  let spacingGridHeightInput = $derived(gridOverlayStore.spacingGridHeight);
+  let spacingGridColorInput = $derived(gridOverlayStore.spacingGridColor);
+  let layoutGridColorInput = $derived(gridOverlayStore.layoutGridColor);
 
   let canUpdateSpacingGridHeight = $derived(
     spacingGridHeightInput.trim() !== "" && spacingGridHeightInput !== gridOverlayStore.spacingGridHeight
@@ -28,13 +31,6 @@
   let canUpdateLayoutGridColor = $derived(
     layoutGridColorInput.trim() !== "" && layoutGridColorInput !== gridOverlayStore.layoutGridColor
   );
-
-  // Sync input states when store values change (e.g., after reset)
-  $effect(() => {
-    spacingGridHeightInput = gridOverlayStore.spacingGridHeight;
-    spacingGridColorInput = gridOverlayStore.spacingGridColor;
-    layoutGridColorInput = gridOverlayStore.layoutGridColor;
-  });
 
   let newGridWidth = $state("");
   let newGridColumns = $state("");
@@ -65,13 +61,16 @@
   }
 
   async function handleAddGrid() {
-    await gridManagerStore.add({
-      width: /^\d+$/.test(newGridWidth) ? `${newGridWidth}px` : newGridWidth,
+    const id = await gridManagerStore.add({
+      width: withDefaultUnit(newGridWidth),
       columns: Number(newGridColumns),
-      gutterWidth: /^\d+$/.test(newGridGutter) ? `${newGridGutter}px` : newGridGutter,
+      gutterWidth: withDefaultUnit(newGridGutter),
       isGutterOnOutside: newGridGutterOutside,
       position: newGridPosition
     });
+    // Keep the user's input when validation or saving failed
+    if (!id) return;
+
     newGridWidth = "";
     newGridColumns = "";
     newGridGutter = "";

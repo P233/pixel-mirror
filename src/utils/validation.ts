@@ -34,6 +34,14 @@ export function fail<T>(message: string, details?: string): ValidationResult<T> 
 }
 
 /**
+ * Append "px" to a bare number ("12" -> "12px"); other values are returned trimmed
+ */
+export function withDefaultUnit(value: string): string {
+  const trimmed = value.trim();
+  return /^\d+(\.\d+)?$/.test(trimmed) ? `${trimmed}px` : trimmed;
+}
+
+/**
  * Validate CSS length value (e.g., "100px", "50%", "1.5rem")
  */
 export function validateCSSLength(value: string, fieldName: string): ValidationResult<string> {
@@ -48,15 +56,23 @@ export function validateCSSLength(value: string, fieldName: string): ValidationR
 }
 
 /**
- * Validate color value (hex, rgb, or rgba)
+ * Validate a CSS color value. Uses the browser's own parser when available,
+ * so every valid CSS color (named, hsl, oklch, ...) is accepted.
  */
 export function validateColor(value: string, fieldName: string): ValidationResult<string> {
   const trimmed = value.trim();
   if (!trimmed) {
     return fail(`${fieldName} is required`);
   }
-  if (!HEX_COLOR_PATTERN.test(trimmed) && !RGB_COLOR_PATTERN.test(trimmed)) {
-    return fail(`Invalid ${fieldName} format`, `Expected hex (#fff, #ffffff) or rgb/rgba format, got "${value}"`);
+  const isValid =
+    typeof CSS !== "undefined" && typeof CSS.supports === "function"
+      ? CSS.supports("color", trimmed)
+      : HEX_COLOR_PATTERN.test(trimmed) || RGB_COLOR_PATTERN.test(trimmed);
+  if (!isValid) {
+    return fail(
+      `Invalid ${fieldName} format`,
+      `Expected a CSS color such as #fff, rgba(0, 0, 255, 0.1) or hsl(0 100% 50%), got "${value}"`
+    );
   }
   return ok(trimmed);
 }

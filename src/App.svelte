@@ -98,9 +98,12 @@
   }
 
   function handleGlobalDrop(e: DragEvent) {
-    e.preventDefault();
     showDropZone = false;
     dragEnterCount = 0;
+
+    // Leave text/HTML drops alone, and drops the host page already handled (e.g. its own uploader)
+    if (!hasFiles(e) || e.defaultPrevented) return;
+    e.preventDefault();
 
     const files = Array.from(e.dataTransfer?.files || []).filter((file) =>
       ALLOWED_MIME_TYPES.includes(file.type as (typeof ALLOWED_MIME_TYPES)[number])

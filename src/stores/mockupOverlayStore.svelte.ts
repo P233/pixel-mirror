@@ -89,6 +89,10 @@ function createMockupOverlayStore() {
   let zoomInitialPosition = { x: 0, y: 0 };
   let zoomMouseStart = { x: 0, y: 0 };
   let preZoomScale = 1;
+  let preZoomPosition = { x: 0, y: 0 };
+
+  // Incremented on every load so a slow, superseded load can't overwrite a newer one
+  let loadToken = 0;
 
   // Mobile touch state (not reactive)
   let touchDragStart = { x: 0, y: 0 };
@@ -99,13 +103,18 @@ function createMockupOverlayStore() {
   let pinchStartPosition = { x: 0, y: 0 }; // Position at pinch start
   let solidPanStart = { x: 0, y: 0 };
   let solidPanInitialPosition = { x: 0, y: 0 };
+
+  // Snapshot taken when entering solid mode, restored on exit (desktop and mobile)
   let preSolidScale = 1;
+  let preSolidPosition = { x: 0, y: 0 };
 
   // ============================================
   // Internal helpers
   // ============================================
 
   async function loadMockup(id: string | null) {
+    const token = ++loadToken;
+
     if (!id) {
       if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
       activeMockupUrl = null;
@@ -118,6 +127,7 @@ function createMockupOverlayStore() {
 
     try {
       const mockup = await getMockup(id);
+      if (token !== loadToken) return;
 
       if (mockup) {
         if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
@@ -128,9 +138,13 @@ function createMockupOverlayStore() {
 
         const img = new Image();
         img.onload = () => {
+          if (token !== loadToken) return;
           mockupSize = { width: img.naturalWidth, height: img.naturalHeight };
+          // The aligned position depends on the image size, which is only known now
+          updateAlignedPosition();
         };
         img.onerror = () => {
+          if (token !== loadToken) return;
           toastStore.showError(new Error(`Failed to load mockup image.`));
           mockupSize = { width: 0, height: 0 };
         };
@@ -142,6 +156,7 @@ function createMockupOverlayStore() {
         mockupSize = { width: 0, height: 0 };
       }
     } catch (e) {
+      if (token !== loadToken) return;
       toastStore.showError(e, "Failed to load mockup");
       activeMockupUrl = null;
       activeMockupMetadata = undefined;
@@ -245,6 +260,23 @@ function createMockupOverlayStore() {
       x: zoomInitialPosition.x - dx,
       y: zoomInitialPosition.y - dy
     };
+  }
+
+  function enterInspection() {
+    modeBeforeSolid = mode as "visible" | "locked";
+    preSolidScale = scale;
+    preSolidPosition = { ...bufferedPosition };
+    mode = "solid";
+  }
+
+  function exitInspection() {
+    if (mode !== "solid" && mode !== "zoomed") return;
+
+    window.removeEventListener("mousemove", handleZoomModeMove);
+    isZoomPanning = false;
+    scale = preSolidScale;
+    bufferedPosition = { ...preSolidPosition };
+    mode = modeBeforeSolid;
   }
 
   // ============================================
@@ -382,13 +414,7 @@ function createMockupOverlayStore() {
 
     toggleVisibility: () => {
       // Can toggle visibility from any mode, but will exit solid/zoomed first
-      if (mode === "solid" || mode === "zoomed") {
-        window.removeEventListener("mousemove", handleZoomModeMove);
-        scale = preZoomScale || scale;
-        bufferedPosition = { ...persistedPosition };
-        isZoomPanning = false;
-        mode = isLocked ? "locked" : "visible";
-      }
+      exitInspection();
 
       isHidden = !isHidden;
       updateSetting("mockupOverlay", "isHidden", isHidden).catch(toastStore.showError);
@@ -537,23 +563,10 @@ function createMockupOverlayStore() {
     enterSolidMode: () => {
       if (mode !== "visible" && mode !== "locked") return;
 
-      modeBeforeSolid = mode;
-      mode = "solid";
+      enterInspection();
     },
 
-    exitSolidMode: () => {
-      // If in zoomed mode, clean up zoom first
-      if (mode === "zoomed") {
-        window.removeEventListener("mousemove", handleZoomModeMove);
-        scale = preZoomScale;
-        bufferedPosition = { ...persistedPosition };
-        isZoomPanning = false;
-      }
-
-      if (mode === "solid" || mode === "zoomed") {
-        mode = modeBeforeSolid;
-      }
-    },
+    exitSolidMode: exitInspection,
 
     // ============================================
     // Zoom Mode (only from solid mode)
@@ -564,6 +577,7 @@ function createMockupOverlayStore() {
 
       mode = "zoomed";
       preZoomScale = scale;
+      preZoomPosition = { ...bufferedPosition };
       const zoomScale = scale * ZOOM_FACTOR;
       scale = zoomScale;
 
@@ -600,7 +614,7 @@ function createMockupOverlayStore() {
       window.removeEventListener("mousemove", handleZoomModeMove);
       mode = "solid";
       scale = preZoomScale;
-      bufferedPosition = { ...persistedPosition };
+      bufferedPosition = { ...preZoomPosition };
       isZoomPanning = false;
     },
 
@@ -612,10 +626,7 @@ function createMockupOverlayStore() {
       window.removeEventListener("mousemove", handleGlobalMouseMove);
       window.removeEventListener("mouseup", handleGlobalMouseUp);
       window.removeEventListener("mousemove", handleZoomModeMove);
-
-      if (activeMockupUrl) {
-        URL.revokeObjectURL(activeMockupUrl);
-      }
+      // The active object URL is kept: the store outlives component mounts, and a remount reuses it
     },
 
     // ============================================
@@ -685,15 +696,9 @@ function createMockupOverlayStore() {
      */
     toggleMobileSolidMode: () => {
       if (mode === "solid") {
-        // Exit solid mode - restore scale and position
-        scale = preSolidScale;
-        bufferedPosition = { ...persistedPosition };
-        mode = modeBeforeSolid;
+        exitInspection();
       } else if (mode === "visible" || mode === "locked") {
-        // Enter solid mode - save current state
-        modeBeforeSolid = mode;
-        preSolidScale = scale;
-        mode = "solid";
+        enterInspection();
       }
     },
 

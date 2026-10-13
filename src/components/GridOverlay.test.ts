@@ -217,11 +217,11 @@ describe("GridOverlay component", () => {
       expect(mockGridStore.init).toHaveBeenCalledTimes(1);
     });
 
-    it("calls gridOverlayStore.cleanup() on destroy", () => {
+    it("keeps the store subscribed on destroy so a remount still syncs settings", () => {
       const { unmount } = render(GridOverlay);
       unmount();
 
-      expect(mockGridStore.cleanup).toHaveBeenCalledTimes(1);
+      expect(mockGridStore.cleanup).not.toHaveBeenCalled();
     });
   });
 

@@ -680,6 +680,114 @@ describe("mockupOverlayStore", () => {
     });
   });
 
+  describe("loading mockups", () => {
+    class FakeImage {
+      static width = 800;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = FakeImage.width;
+      naturalHeight = 2000;
+      set src(_url: string) {
+        setTimeout(() => this.onload?.(), 0);
+      }
+    }
+
+    const mockup = (id: string) => ({ id, originalBuffer: new ArrayBuffer(1), mimeType: "image/png" });
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+    beforeEach(() => {
+      vi.stubGlobal("Image", FakeImage);
+      let urlCount = 0;
+      vi.mocked(URL.createObjectURL).mockImplementation(() => `blob:url-${++urlCount}`);
+      Object.defineProperty(document.documentElement, "clientWidth", { value: 1024, configurable: true });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("applies the default top-center alignment once the image size is known", async () => {
+      getMockup.mockImplementation(async (id: string) => mockup(id));
+      await mockupOverlayStore.init();
+
+      mockupOverlayStore.setActiveMockup("a");
+      await flush();
+
+      expect(mockupOverlayStore.positionDisplay).toBe("top·center");
+      expect(mockupOverlayStore.position.x).toBe((1024 - 800) / 2);
+    });
+
+    it("re-aligns when switching to a mockup of a different width", async () => {
+      getMockup.mockImplementation(async (id: string) => mockup(id));
+      await mockupOverlayStore.init();
+      mockupOverlayStore.setActiveMockup("a");
+      await flush();
+
+      FakeImage.width = 1000;
+      mockupOverlayStore.setActiveMockup("b");
+      await flush();
+      FakeImage.width = 800;
+
+      expect(mockupOverlayStore.position.x).toBe((1024 - 1000) / 2);
+    });
+
+    it("ignores a slower load that was superseded by a newer selection", async () => {
+      let resolveA: (value: ReturnType<typeof mockup>) => void = () => {};
+      getMockup.mockImplementation((id: string) =>
+        id === "a" ? new Promise((resolve) => (resolveA = resolve)) : Promise.resolve(mockup(id))
+      );
+      await mockupOverlayStore.init();
+
+      mockupOverlayStore.setActiveMockup("a");
+      mockupOverlayStore.setActiveMockup("b");
+      await flush();
+      const urlForB = mockupOverlayStore.activeMockupUrl;
+
+      resolveA(mockup("a"));
+      await flush();
+
+      expect(mockupOverlayStore.activeMockupId).toBe("b");
+      expect(mockupOverlayStore.activeMockupUrl).toBe(urlForB);
+    });
+
+    it("keeps the active image URL usable across cleanup and re-init (remount)", async () => {
+      getSettingsByGroup.mockResolvedValue({ activeMockupId: "a" });
+      getMockup.mockImplementation(async (id: string) => mockup(id));
+      await mockupOverlayStore.init();
+      const url = mockupOverlayStore.activeMockupUrl;
+
+      mockupOverlayStore.cleanup();
+      await mockupOverlayStore.init();
+
+      expect(mockupOverlayStore.activeMockupUrl).toBe(url);
+      expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(url);
+    });
+  });
+
+  describe("leaving solid mode", () => {
+    it("restores the pre-solid scale when hiding from mobile solid mode", () => {
+      mockupOverlayStore.cycleScale(); // 1x -> 0.5x
+      mockupOverlayStore.toggleMobileSolidMode();
+      mockupOverlayStore.startGesturePinch(0, 0);
+      mockupOverlayStore.handleGesturePinch(3);
+
+      mockupOverlayStore.toggleVisibility();
+
+      expect(mockupOverlayStore.scale).toBe(0.5);
+      expect(mockupOverlayStore.mode).toBe("visible");
+    });
+
+    it("restores the pre-solid scale when exiting desktop solid mode after a pinch", () => {
+      mockupOverlayStore.enterSolidMode();
+      mockupOverlayStore.startGesturePinch(0, 0);
+      mockupOverlayStore.handleGesturePinch(2);
+
+      mockupOverlayStore.exitSolidMode();
+
+      expect(mockupOverlayStore.scale).toBe(1);
+    });
+  });
+
   describe("cleanup", () => {
     it("removes event listeners", async () => {
       await mockupOverlayStore.init();

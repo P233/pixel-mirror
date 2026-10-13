@@ -504,4 +504,14 @@ describe("database operations", () => {
       });
     });
   });
+
+  describe("opening the database", () => {
+    it("retries after a failed open instead of caching the failure", async () => {
+      const { openDB } = await import("idb");
+      vi.mocked(openDB).mockRejectedValueOnce(new Error("blocked"));
+
+      await expect(database.getAllMockups()).rejects.toThrow("Failed to load mockups");
+      await expect(database.getAllMockups()).resolves.toEqual([]);
+    });
+  });
 });

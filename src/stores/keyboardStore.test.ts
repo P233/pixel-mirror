@@ -17,6 +17,7 @@ vi.mock("./dockStore.svelte", () => ({
 vi.mock("./mockupOverlayStore.svelte", () => ({
   mockupOverlayStore: {
     isHidden: false,
+    activeMockupUrl: "blob:mockup" as string | null,
     mode: "visible" as "visible" | "locked" | "dragging" | "solid" | "zoomed",
     adjustOpacity: vi.fn(),
     enterSolidMode: vi.fn(),
@@ -32,6 +33,7 @@ describe("keyboardStore", () => {
   let dockStore: { mode: "toolbar" | "mockups" | "grids" };
   let mockupOverlayStore: {
     isHidden: boolean;
+    activeMockupUrl: string | null;
     mode: "visible" | "locked" | "dragging" | "solid" | "zoomed";
     adjustOpacity: ReturnType<typeof vi.fn>;
     enterSolidMode: ReturnType<typeof vi.fn>;
@@ -54,6 +56,7 @@ describe("keyboardStore", () => {
     // Reset mock state
     dockStore.mode = "toolbar";
     mockupOverlayStore.isHidden = false;
+    mockupOverlayStore.activeMockupUrl = "blob:mockup";
     mockupOverlayStore.mode = "visible";
     mockupOverlayStore.adjustOpacity.mockReset();
     mockupOverlayStore.enterSolidMode.mockReset();
@@ -125,6 +128,29 @@ describe("keyboardStore", () => {
       expect(removeSpy).not.toHaveBeenCalled();
 
       removeSpy.mockRestore();
+    });
+  });
+
+  describe("without an active mockup", () => {
+    beforeEach(() => {
+      keyboardStore.init();
+      mockupOverlayStore.activeMockupUrl = null;
+    });
+
+    it.each(["ArrowDown", " ", "Escape"])("leaves '%s' to the host page", (key) => {
+      const event = new KeyboardEvent("keydown", { key, cancelable: true });
+      window.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(mockupOverlayStore.move).not.toHaveBeenCalled();
+      expect(mockupOverlayStore.enterSolidMode).not.toHaveBeenCalled();
+      expect(mockupOverlayStore.toggleLock).not.toHaveBeenCalled();
+    });
+
+    it("does not persist position on arrow key release", () => {
+      window.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown" }));
+
+      expect(mockupOverlayStore.persistPosition).not.toHaveBeenCalled();
     });
   });
 

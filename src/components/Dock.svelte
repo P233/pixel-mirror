@@ -480,7 +480,7 @@
     position: relative;
 
     &.sliding {
-      background: var(--btn-hover);
+      background: var(--focus-bg);
       opacity: 1;
     }
 

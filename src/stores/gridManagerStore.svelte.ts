@@ -21,7 +21,7 @@ import {
 import { gridOverlayStore } from "./gridOverlayStore.svelte";
 import { toastStore } from "./toastStore.svelte";
 // Utils
-import { validateLayoutGridConfig } from "~/utils/validation";
+import { validateColor, validateCSSLength, validateLayoutGridConfig, withDefaultUnit } from "~/utils/validation";
 
 function createGridManagerStore() {
   let layoutGrids = $state<LayoutGridConfig[]>([]);
@@ -29,7 +29,8 @@ function createGridManagerStore() {
   let initialized = $state(false);
   let initPromise: Promise<void> | null = null;
 
-  const setActiveLayoutGrid = async (id: string) => {
+  // Throws so that multi-step operations (add/delete/reset) stop on failure
+  const activateLayoutGrid = async (id: string) => {
     try {
       await updateSetting("gridOverlay", "activeLayoutGridId", id);
       // Note: gridOverlayStore is automatically synced via eventBus
@@ -38,6 +39,9 @@ function createGridManagerStore() {
       throw e;
     }
   };
+
+  // For UI event handlers: the error is reported via toast, never left as an unhandled rejection
+  const setActiveLayoutGrid = (id: string) => activateLayoutGrid(id).catch(() => {});
 
   return {
     get initialized() {
@@ -56,17 +60,17 @@ function createGridManagerStore() {
           if (loadedGrids.length === 0) {
             const id = await addGrid(DEFAULT_GRID_TEMPLATE);
             layoutGrids = [{ ...DEFAULT_GRID_TEMPLATE, id, createdAt: Date.now() }];
-            await setActiveLayoutGrid(id);
+            await activateLayoutGrid(id);
           } else {
             layoutGrids = loadedGrids;
             const settings = await getSettingsByGroup("gridOverlay");
             if (settings.activeLayoutGridId) {
               const activeExists = loadedGrids.some((g) => g.id === settings.activeLayoutGridId);
               if (!activeExists) {
-                await setActiveLayoutGrid(loadedGrids[0].id);
+                await activateLayoutGrid(loadedGrids[0].id);
               }
             } else {
-              await setActiveLayoutGrid(loadedGrids[0].id);
+              await activateLayoutGrid(loadedGrids[0].id);
             }
           }
         } catch (e) {
@@ -89,11 +93,15 @@ function createGridManagerStore() {
     },
 
     updateSpacingGridHeight: (height: string) => {
-      updateSetting("gridOverlay", "spacingGridHeight", height).catch(toastStore.showError);
+      const validation = validateCSSLength(withDefaultUnit(height), "Spacing grid height");
+      if (!validation.success) return toastStore.showError(validation.error);
+      updateSetting("gridOverlay", "spacingGridHeight", validation.data).catch(toastStore.showError);
     },
 
     updateSpacingGridColor: (color: string) => {
-      updateSetting("gridOverlay", "spacingGridColor", color).catch(toastStore.showError);
+      const validation = validateColor(color, "Spacing grid color");
+      if (!validation.success) return toastStore.showError(validation.error);
+      updateSetting("gridOverlay", "spacingGridColor", validation.data).catch(toastStore.showError);
     },
 
     toggleLayoutGrid: () => {
@@ -102,7 +110,9 @@ function createGridManagerStore() {
     },
 
     updateLayoutGridColor: (color: string) => {
-      updateSetting("gridOverlay", "layoutGridColor", color).catch(toastStore.showError);
+      const validation = validateColor(color, "Layout grid color");
+      if (!validation.success) return toastStore.showError(validation.error);
+      updateSetting("gridOverlay", "layoutGridColor", validation.data).catch(toastStore.showError);
     },
 
     setActiveLayoutGrid,
@@ -121,7 +131,7 @@ function createGridManagerStore() {
       try {
         const id = await addGrid(validation.data);
         layoutGrids = await getAllGrids();
-        await setActiveLayoutGrid(id);
+        await activateLayoutGrid(id);
         return id;
       } catch (e) {
         toastStore.showError(e, "Failed to add grid");
@@ -137,11 +147,11 @@ function createGridManagerStore() {
         if (gridOverlayStore.activeLayoutGridId === id) {
           const nextGrid = layoutGrids[0];
           if (nextGrid) {
-            await setActiveLayoutGrid(nextGrid.id);
+            await activateLayoutGrid(nextGrid.id);
           } else {
             const newId = await addGrid(DEFAULT_GRID_TEMPLATE);
             layoutGrids = await getAllGrids();
-            await setActiveLayoutGrid(newId);
+            await activateLayoutGrid(newId);
           }
         }
       } catch (e) {
@@ -155,7 +165,7 @@ function createGridManagerStore() {
         await resetGridOverlaySettings();
         const id = await addGrid(DEFAULT_GRID_TEMPLATE);
         layoutGrids = [{ ...DEFAULT_GRID_TEMPLATE, id, createdAt: Date.now() }];
-        await setActiveLayoutGrid(id);
+        await activateLayoutGrid(id);
         // Sync defaults that aren't covered by setActiveLayoutGrid
         gridOverlayStore.syncSettings(DEFAULT_GRID_OVERLAY_SETTINGS);
       } catch (e) {

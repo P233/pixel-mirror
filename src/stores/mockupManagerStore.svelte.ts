@@ -5,6 +5,7 @@
  */
 
 // Utils
+import { ValidationError } from "~/utils/errors";
 import { generateMockupBuffers } from "~/utils/generate-mockup-buffers";
 // Database
 import { addMockups, deleteMockup, getAllMockups, resetMockups } from "./database";
@@ -23,8 +24,12 @@ function createMockupManagerStore() {
   async function processUpload(files: File[]): Promise<string[]> {
     const { data, errors } = await generateMockupBuffers(files);
 
-    if (errors.length > 0) {
-      errors.forEach((error) => toastStore.showError(error));
+    // The toast shows one message at a time, so report all failures together
+    if (errors.length === 1) {
+      toastStore.showError(errors[0]);
+    } else if (errors.length > 1) {
+      const summary = errors.map((error) => error.message).join("; ");
+      toastStore.showError(new ValidationError(`${errors.length} files could not be added: ${summary}`));
     }
 
     if (data.length > 0) {

@@ -48,7 +48,7 @@ function generateId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-let dbPromise: Promise<IDBPDatabase<PixelMirrorDBSchema>>;
+let dbPromise: Promise<IDBPDatabase<PixelMirrorDBSchema>> | undefined;
 
 async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
   if (!dbPromise) {
@@ -67,6 +67,10 @@ async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
           db.createObjectStore("settings");
         }
       }
+    }).catch((error) => {
+      // Don't cache the failure: the next call retries opening the database
+      dbPromise = undefined;
+      throw error;
     });
   }
   return dbPromise;

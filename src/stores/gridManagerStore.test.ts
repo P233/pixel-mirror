@@ -35,7 +35,8 @@ vi.mock("./toastStore.svelte", () => ({
 }));
 
 // Mock validation
-vi.mock("~/utils/validation", () => ({
+vi.mock("~/utils/validation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/utils/validation")>()),
   validateLayoutGridConfig: vi.fn().mockReturnValue({ success: true, data: {} })
 }));
 
@@ -198,9 +199,22 @@ describe("gridManagerStore", () => {
     });
 
     it("updates spacing grid height", () => {
+      gridManagerStore.updateSpacingGridHeight("1rem");
+
+      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "spacingGridHeight", "1rem");
+    });
+
+    it("appends px to a bare number", () => {
       gridManagerStore.updateSpacingGridHeight("12");
 
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "spacingGridHeight", "12");
+      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "spacingGridHeight", "12px");
+    });
+
+    it("rejects an invalid height without saving it", () => {
+      gridManagerStore.updateSpacingGridHeight("banana");
+
+      expect(updateSetting).not.toHaveBeenCalledWith("gridOverlay", "spacingGridHeight", expect.anything());
+      expect(toastStore.showError).toHaveBeenCalled();
     });
   });
 
@@ -213,6 +227,13 @@ describe("gridManagerStore", () => {
       gridManagerStore.updateSpacingGridColor("#ff0000");
 
       expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "spacingGridColor", "#ff0000");
+    });
+
+    it("rejects an invalid color without saving it", () => {
+      gridManagerStore.updateSpacingGridColor("banana");
+
+      expect(updateSetting).not.toHaveBeenCalledWith("gridOverlay", "spacingGridColor", expect.anything());
+      expect(toastStore.showError).toHaveBeenCalled();
     });
   });
 
@@ -248,6 +269,13 @@ describe("gridManagerStore", () => {
 
       expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "layoutGridColor", "#00ff00");
     });
+
+    it("rejects an invalid color without saving it", () => {
+      gridManagerStore.updateLayoutGridColor("not-a-color");
+
+      expect(updateSetting).not.toHaveBeenCalledWith("gridOverlay", "layoutGridColor", expect.anything());
+      expect(toastStore.showError).toHaveBeenCalled();
+    });
   });
 
   describe("setActiveLayoutGrid", () => {
@@ -265,7 +293,7 @@ describe("gridManagerStore", () => {
       const error = new Error("Update failed");
       updateSetting.mockRejectedValue(error);
 
-      await expect(gridManagerStore.setActiveLayoutGrid("grid-2")).rejects.toThrow("Update failed");
+      await expect(gridManagerStore.setActiveLayoutGrid("grid-2")).resolves.toBeUndefined();
       expect(toastStore.showError).toHaveBeenCalledWith(error, "Failed to set active grid");
     });
   });

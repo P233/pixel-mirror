@@ -593,6 +593,7 @@ describe("GridManager component", () => {
 
     it("clears input fields after adding grid", async () => {
       mockOverlayStore.showLayoutGrid = true;
+      mockManagerStore.add.mockResolvedValue("new-grid-id");
       const { container } = render(GridManager);
 
       const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
