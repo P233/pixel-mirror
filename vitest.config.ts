@@ -3,26 +3,10 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { svelteTesting } from "@testing-library/svelte/vite";
 import path from "path";
 import { defineConfig } from "vitest/config";
+import { svgPluginOptions } from "./svg.config";
 
 export default defineConfig({
-  plugins: [
-    svelte(),
-    svelteSvg({
-      svgoOptions: {
-        plugins: [
-          {
-            name: "preset-default",
-            params: {
-              overrides: {
-                cleanupIds: false
-              }
-            }
-          }
-        ]
-      }
-    }),
-    svelteTesting()
-  ],
+  plugins: [svelte(), svelteSvg(svgPluginOptions), svelteTesting()],
   test: {
     globals: true,
     environment: "jsdom",

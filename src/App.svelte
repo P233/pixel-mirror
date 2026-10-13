@@ -1,4 +1,5 @@
-<svelte:options customElement="pixel-mirror" />
+<!-- No tag name here: main.ts registers the element itself so a second copy of the script cannot throw -->
+<svelte:options customElement={{ shadow: "open" }} />
 
 <script lang="ts">
   import Dock from "~/components/Dock.svelte";
@@ -168,6 +169,17 @@
 </div>
 
 <style lang="scss">
+  // Isolate the tool from the host page: inherited properties (font, letter-spacing,
+  // text-transform, line-height, color, ...) would otherwise leak into the shadow root.
+  // `!important` is needed because host rules matching <pixel-mirror> itself (e.g. `* {}`)
+  // beat normal :host rules, while important :host rules beat the host page's.
+  // `all` doesn't cover `direction`, so RTL pages would still flip the toolbar without it.
+  :host {
+    all: initial !important;
+    font-family: Arial, sans-serif !important;
+    direction: ltr !important;
+  }
+
   .theme-root {
     // Dock
     --dock-bg: #fff;

@@ -71,6 +71,16 @@ export default defineConfig({
 });
 ```
 
+The plugin only runs in dev (`vite serve`) and injects the tool into `index.html`.
+
+### Any bundler / SSR frameworks (SvelteKit, Nuxt, Remix, ...)
+
+Frameworks that render HTML themselves don't go through Vite's `index.html` transform. Import the package from your client entry instead; it is dropped from production builds:
+
+```js
+if (import.meta.env.DEV) import("pixel-mirror");
+```
+
 ### Astro
 
 ```js
@@ -106,6 +116,8 @@ Remove in production.
 This tool sets an inline `position: relative` style on the `<html>` element for overlay positioning. This may affect layouts that depend on the default `static` positioning of `<html>`.
 
 On touch devices, browser pinch-to-zoom is temporarily disabled while the mockup overlay is visible to avoid conflicts with the tool's gesture handling. It reverts to normal when the overlay is hidden.
+
+If your page enforces [Trusted Types](https://developer.mozilla.org/docs/Web/API/Trusted_Types_API) (`require-trusted-types-for 'script'`), allow the `svelte-trusted-html` policy in your dev CSP, e.g. `trusted-types your-policies svelte-trusted-html 'allow-duplicates'` (`'allow-duplicates'` is only needed if your app also uses Svelte).
 
 ## Credits
 

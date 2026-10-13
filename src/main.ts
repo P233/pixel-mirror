@@ -1,12 +1,29 @@
-import "./App.svelte";
+import App from "./App.svelte";
 
-const tagName = "pixel-mirror";
+const TAG_NAME = "pixel-mirror";
 
-if (!document.querySelector(tagName)) {
-  document.body.appendChild(document.createElement(tagName));
+function mount() {
+  // Loading the script twice (e.g. the Vite plugin plus a manual <script>) must not throw
+  if (!customElements.get(TAG_NAME)) {
+    customElements.define(TAG_NAME, App.element!);
+  }
+
+  if (!document.querySelector(TAG_NAME)) {
+    document.body.appendChild(document.createElement(TAG_NAME));
+  }
+
+  // Sets html element position to relative.
+  // This is the minimal-cost solution for overlay positioning.
+  // Most host projects should be unaffected by this change.
+  document.documentElement.style.position = "relative";
 }
 
-// Sets html element position to relative.
-// This is the minimal-cost solution for overlay positioning.
-// Most host projects should be unaffected by this change.
-document.documentElement.style.position = "relative";
+// A script that runs from <head> without `defer` (or is inserted dynamically) runs before <body> exists
+if (document.body) {
+  mount();
+} else {
+  document.addEventListener("DOMContentLoaded", mount, { once: true });
+}
+
+// Astro view transitions replace <body>, which removes the element; put it back after each swap
+document.addEventListener("astro:after-swap", mount);

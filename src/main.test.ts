@@ -6,14 +6,17 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock App.svelte since it's a custom element
-vi.mock("./App.svelte", () => ({}));
+// Each test file gets its own window, so one stand-in element class is enough
+vi.mock("./App.svelte", () => ({
+  default: { element: class extends HTMLElement {} }
+}));
 
 describe("main.ts", () => {
   beforeEach(() => {
     vi.resetModules();
 
     // Reset DOM state
+    if (!document.body) document.documentElement.appendChild(document.createElement("body"));
     document.body.innerHTML = "";
     document.documentElement.style.position = "";
   });
@@ -24,6 +27,7 @@ describe("main.ts", () => {
     await import("./main");
 
     expect(document.querySelector("pixel-mirror")).toBeInTheDocument();
+    expect(customElements.get("pixel-mirror")).toBeDefined();
   });
 
   it("does not create duplicate element if already present", async () => {
@@ -35,6 +39,36 @@ describe("main.ts", () => {
 
     const elements = document.querySelectorAll("pixel-mirror");
     expect(elements.length).toBe(1);
+  });
+
+  it("does not throw when the script is loaded a second time", async () => {
+    await import("./main");
+    vi.resetModules();
+
+    await expect(import("./main")).resolves.toBeDefined();
+    expect(document.querySelectorAll("pixel-mirror")).toHaveLength(1);
+  });
+
+  it("waits for the DOM when the script runs before <body> exists", async () => {
+    document.body.remove();
+
+    await import("./main");
+    expect(document.querySelector("pixel-mirror")).toBeNull();
+
+    document.documentElement.appendChild(document.createElement("body"));
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+
+    expect(document.querySelector("pixel-mirror")).toBeInTheDocument();
+  });
+
+  it("restores the element after an Astro view transition replaces <body>", async () => {
+    await import("./main");
+
+    document.body.replaceWith(document.createElement("body"));
+    expect(document.querySelector("pixel-mirror")).toBeNull();
+    document.dispatchEvent(new Event("astro:after-swap"));
+
+    expect(document.querySelector("pixel-mirror")).toBeInTheDocument();
   });
 
   it("sets html element position to relative", async () => {

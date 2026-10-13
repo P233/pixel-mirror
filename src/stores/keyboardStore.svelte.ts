@@ -49,11 +49,18 @@ function createKeyboardStore() {
     return dockStore.mode === "toolbar" && !mockupOverlayStore.isHidden && !!mockupOverlayStore.activeMockupUrl;
   }
 
+  function isEditable(target: EventTarget | null | undefined): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    return INPUT_TAGS.has(target.tagName) || target.isContentEditable;
+  }
+
   /**
-   * Check if focus is on an element that needs keyboard input
-   * (input, textarea, select, or contentEditable)
+   * Check if the key event is meant for an element that needs keyboard input
+   * (input, textarea, select, or contentEditable), including inside open shadow roots
    */
-  function isFocusOnInputElement(): boolean {
+  function isFocusOnInputElement(e: KeyboardEvent): boolean {
+    if (isEditable(e.composedPath()[0])) return true;
+
     let activeElement = document.activeElement;
 
     // Traverse Shadow DOM to find the actual focused element
@@ -61,10 +68,15 @@ function createKeyboardStore() {
       activeElement = activeElement.shadowRoot.activeElement;
     }
 
-    if (!activeElement) return false;
+    return isEditable(activeElement);
+  }
 
-    const el = activeElement as HTMLElement;
-    return INPUT_TAGS.has(el.tagName) || el.isContentEditable;
+  /**
+   * Shortcut keys must not take over keys the host page or the browser needs:
+   * keys the page already handled, IME composition, and browser/OS combos (Ctrl/Cmd/Alt + key)
+   */
+  function isReservedForHost(e: KeyboardEvent): boolean {
+    return e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey;
   }
 
   /**
@@ -121,7 +133,7 @@ function createKeyboardStore() {
    */
   function handleKeyDown(e: KeyboardEvent) {
     // Skip if focus is on input elements that need keyboard input
-    if (isFocusOnInputElement()) return;
+    if (isFocusOnInputElement(e)) return;
 
     // Track Control/Shift regardless of mockup state (for global shortcuts)
     switch (e.key) {
@@ -139,12 +151,14 @@ function createKeyboardStore() {
 
     // Below events require mockup overlay to be active (toolbar mode)
     // In manager mode, let buttons respond to space key normally
-    if (!shouldHandleMockupEvents()) return;
+    if (!shouldHandleMockupEvents() || isReservedForHost(e)) return;
 
     const { mode } = mockupOverlayStore;
 
     switch (e.key) {
       case " ":
+        // Shift+Space scrolls the page up
+        if (e.shiftKey) return;
         // Prevent space key default behavior (page scroll, button click)
         e.preventDefault();
         // Space: enter solid mode (only from visible or locked)

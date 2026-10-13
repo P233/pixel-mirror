@@ -4,6 +4,7 @@ import cssnano from "cssnano";
 import path from "path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
+import { svgPluginOptions } from "./svg.config";
 
 /**
  * Vite plugin to remove data-testid attributes in production builds
@@ -29,24 +30,7 @@ export default defineConfig({
   server: {
     port: 3000
   },
-  plugins: [
-    removeTestIds(),
-    svelte(),
-    svelteSvg({
-      svgoOptions: {
-        plugins: [
-          {
-            name: "preset-default",
-            params: {
-              overrides: {
-                cleanupIds: false
-              }
-            }
-          }
-        ]
-      }
-    })
-  ],
+  plugins: [removeTestIds(), svelte(), svelteSvg(svgPluginOptions)],
   css: {
     preprocessorOptions: {
       scss: {

@@ -408,6 +408,71 @@ describe("keyboardStore", () => {
     });
   });
 
+  describe("keys reserved for the host page and browser", () => {
+    beforeEach(() => {
+      keyboardStore.init();
+    });
+
+    const press = (key: string, init: KeyboardEventInit = {}) => {
+      const event = new KeyboardEvent("keydown", { key, cancelable: true, ...init });
+      window.dispatchEvent(event);
+      return event;
+    };
+
+    it.each([{ metaKey: true }, { altKey: true }, { ctrlKey: true }])("ignores arrow keys with %o", (modifier) => {
+      const event = press("ArrowLeft", modifier);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(mockupOverlayStore.move).not.toHaveBeenCalled();
+    });
+
+    it("still nudges by 10px with Shift + arrow", () => {
+      press("ArrowLeft", { shiftKey: true });
+
+      expect(mockupOverlayStore.move).toHaveBeenCalledWith(-10, 0);
+    });
+
+    it("leaves Shift+Space (page up) to the browser", () => {
+      const event = press(" ", { shiftKey: true });
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(mockupOverlayStore.enterSolidMode).not.toHaveBeenCalled();
+    });
+
+    it("ignores keys during IME composition", () => {
+      const event = press("ArrowDown", { isComposing: true });
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(mockupOverlayStore.move).not.toHaveBeenCalled();
+    });
+
+    it("ignores keys the host page already handled", () => {
+      const hostHandler = (e: KeyboardEvent) => e.preventDefault();
+      window.addEventListener("keydown", hostHandler, { capture: true });
+
+      press("Escape");
+      press("ArrowDown");
+
+      window.removeEventListener("keydown", hostHandler, { capture: true });
+      expect(mockupOverlayStore.toggleLock).not.toHaveBeenCalled();
+      expect(mockupOverlayStore.move).not.toHaveBeenCalled();
+    });
+
+    it("ignores keys typed into an input inside an open shadow root", () => {
+      const host = document.createElement("div");
+      const input = document.createElement("input");
+      host.attachShadow({ mode: "open" }).appendChild(input);
+      document.body.appendChild(host);
+
+      const event = new KeyboardEvent("keydown", { key: " ", bubbles: true, composed: true, cancelable: true });
+      input.dispatchEvent(event);
+
+      document.body.removeChild(host);
+      expect(event.defaultPrevented).toBe(false);
+      expect(mockupOverlayStore.enterSolidMode).not.toHaveBeenCalled();
+    });
+  });
+
   describe("input element detection", () => {
     beforeEach(() => {
       keyboardStore.init();
