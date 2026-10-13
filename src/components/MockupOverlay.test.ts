@@ -39,15 +39,8 @@ vi.mock("~/stores/dockStore.svelte", () => ({
   dockStore: { mode: "toolbar" as DockMode }
 }));
 
-vi.mock("~/stores/keyboardStore.svelte", () => ({
-  keyboardStore: { init: vi.fn(), cleanup: vi.fn() }
-}));
-
-vi.mock("~/utils/device", () => ({ initInputTypeTracking: vi.fn() }));
-
 import MockupOverlay from "./MockupOverlay.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
-import { keyboardStore } from "~/stores/keyboardStore.svelte";
 import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
 
 type MockStore = {
@@ -178,19 +171,6 @@ describe("MockupOverlay component", () => {
   });
 
   describe("lifecycle", () => {
-    it("initializes the overlay and keyboard stores on mount", () => {
-      renderOverlay();
-
-      expect(store.init).toHaveBeenCalledTimes(1);
-      expect(keyboardStore.init).toHaveBeenCalledTimes(1);
-    });
-
-    it("cleans up the keyboard store on destroy", () => {
-      renderOverlay().unmount();
-
-      expect(keyboardStore.cleanup).toHaveBeenCalledTimes(1);
-    });
-
     it("reports the page size to the store on mount and on resize, until destroyed", () => {
       Object.defineProperty(document.documentElement, "clientWidth", { value: 1024, configurable: true });
       Object.defineProperty(document.documentElement, "scrollHeight", { value: 3000, configurable: true });

@@ -210,21 +210,6 @@ describe("GridOverlay component", () => {
     });
   });
 
-  describe("lifecycle", () => {
-    it("calls gridOverlayStore.init() on mount", () => {
-      render(GridOverlay);
-
-      expect(mockGridStore.init).toHaveBeenCalledTimes(1);
-    });
-
-    it("keeps the store subscribed on destroy so a remount still syncs settings", () => {
-      const { unmount } = render(GridOverlay);
-      unmount();
-
-      expect(mockGridStore.cleanup).not.toHaveBeenCalled();
-    });
-  });
-
   // scaleValue helper - pure function, can test without component
   describe("scaleValue helper (internal)", () => {
     const scaleValue = (value: string, multiplier: number): string => {

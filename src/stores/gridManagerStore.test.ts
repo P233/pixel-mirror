@@ -1,490 +1,238 @@
 /**
- * GridManagerStore Tests
- *
- * Tests for layout grid CRUD operations and settings management.
+ * GridManagerStore Tests (real grid overlay store, in-memory database)
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_GRID_OVERLAY_SETTINGS, DEFAULT_GRID_TEMPLATE } from "~/constants";
 
-// Mock database
-vi.mock("./database", () => ({
-  getAllGrids: vi.fn().mockResolvedValue([]),
-  getSettingsByGroup: vi.fn().mockResolvedValue({}),
-  addGrid: vi.fn().mockResolvedValue("mock-grid-id"),
-  deleteGrid: vi.fn().mockResolvedValue(undefined),
-  updateSetting: vi.fn().mockResolvedValue(undefined),
-  resetGrids: vi.fn().mockResolvedValue(undefined),
-  resetGridOverlaySettings: vi.fn().mockResolvedValue(undefined)
-}));
+vi.mock("./database", () => import("./__fixtures__/memoryDatabase"));
+vi.mock("./toastStore.svelte", () => ({ toastStore: { showError: vi.fn() } }));
 
-// Mock gridOverlayStore
-vi.mock("./gridOverlayStore.svelte", () => ({
-  gridOverlayStore: {
-    showSpacingGrid: false,
-    showLayoutGrid: false,
-    activeLayoutGridId: null,
-    syncSettings: vi.fn()
-  }
-}));
-
-// Mock toastStore
-vi.mock("./toastStore.svelte", () => ({
-  toastStore: {
-    showError: vi.fn()
-  }
-}));
-
-// Mock validation
-vi.mock("~/utils/validation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/utils/validation")>()),
-  validateLayoutGridConfig: vi.fn().mockReturnValue({ success: true, data: {} })
-}));
+type MemoryDatabase = typeof import("./__fixtures__/memoryDatabase");
 
 describe("gridManagerStore", () => {
   let gridManagerStore: typeof import("./gridManagerStore.svelte").gridManagerStore;
-  let getAllGrids: ReturnType<typeof vi.fn>;
-  let getSettingsByGroup: ReturnType<typeof vi.fn>;
-  let addGrid: ReturnType<typeof vi.fn>;
-  let deleteGrid: ReturnType<typeof vi.fn>;
-  let updateSetting: ReturnType<typeof vi.fn>;
-  let resetGrids: ReturnType<typeof vi.fn>;
-  let resetGridOverlaySettings: ReturnType<typeof vi.fn>;
+  let gridOverlayStore: typeof import("./gridOverlayStore.svelte").gridOverlayStore;
+  let flushSettings: typeof import("~/platform/settings.svelte").flushSettings;
+  let db: MemoryDatabase;
   let toastStore: { showError: ReturnType<typeof vi.fn> };
-  let gridOverlayStore: {
-    showSpacingGrid: boolean;
-    showLayoutGrid: boolean;
-    activeLayoutGridId: string | null;
-    syncSettings: ReturnType<typeof vi.fn>;
-  };
-  let validateLayoutGridConfig: ReturnType<typeof vi.fn>;
+
+  const grid = (overrides: Partial<GridInput> = {}): GridInput => ({ ...DEFAULT_GRID_TEMPLATE, ...overrides });
 
   beforeEach(async () => {
     vi.resetModules();
-
-    // Get fresh mocks
-    const dbModule = await import("./database");
-    const toastModule = await import("./toastStore.svelte");
-    const gridOverlayModule = await import("./gridOverlayStore.svelte");
-    const validationModule = await import("~/utils/validation");
-
-    getAllGrids = dbModule.getAllGrids as ReturnType<typeof vi.fn>;
-    getSettingsByGroup = dbModule.getSettingsByGroup as ReturnType<typeof vi.fn>;
-    addGrid = dbModule.addGrid as ReturnType<typeof vi.fn>;
-    deleteGrid = dbModule.deleteGrid as ReturnType<typeof vi.fn>;
-    updateSetting = dbModule.updateSetting as ReturnType<typeof vi.fn>;
-    resetGrids = dbModule.resetGrids as ReturnType<typeof vi.fn>;
-    resetGridOverlaySettings = dbModule.resetGridOverlaySettings as ReturnType<typeof vi.fn>;
-    toastStore = toastModule.toastStore as unknown as { showError: ReturnType<typeof vi.fn> };
-    gridOverlayStore = gridOverlayModule.gridOverlayStore as unknown as typeof gridOverlayStore;
-    validateLayoutGridConfig = validationModule.validateLayoutGridConfig as ReturnType<typeof vi.fn>;
-
-    // Reset mocks
-    getAllGrids.mockReset().mockResolvedValue([]);
-    getSettingsByGroup.mockReset().mockResolvedValue({});
-    addGrid.mockReset().mockResolvedValue("mock-grid-id");
-    deleteGrid.mockReset().mockResolvedValue(undefined);
-    updateSetting.mockReset().mockResolvedValue(undefined);
-    resetGrids.mockReset().mockResolvedValue(undefined);
-    resetGridOverlaySettings.mockReset().mockResolvedValue(undefined);
-    toastStore.showError.mockReset();
-    gridOverlayStore.syncSettings.mockReset();
-    gridOverlayStore.showSpacingGrid = false;
-    gridOverlayStore.showLayoutGrid = false;
-    gridOverlayStore.activeLayoutGridId = null;
-    validateLayoutGridConfig.mockReset().mockReturnValue({ success: true, data: {} });
-
-    // Import fresh store
-    const module = await import("./gridManagerStore.svelte");
-    gridManagerStore = module.gridManagerStore;
+    db = (await import("./database")) as unknown as MemoryDatabase;
+    db.resetMemoryDatabase();
+    toastStore = (await import("./toastStore.svelte")).toastStore as unknown as typeof toastStore;
+    flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
+    gridOverlayStore = (await import("./gridOverlayStore.svelte")).gridOverlayStore;
+    gridManagerStore = (await import("./gridManagerStore.svelte")).gridManagerStore;
   });
 
-  describe("initial state", () => {
-    it("starts uninitialized", () => {
-      expect(gridManagerStore.initialized).toBe(false);
-    });
-
-    it("has empty layoutGrids before init", () => {
-      expect(gridManagerStore.layoutGrids).toEqual([]);
-    });
+  afterEach(async () => {
+    await flushSettings();
   });
 
   describe("init", () => {
-    it("creates default grid when no grids exist", async () => {
-      getAllGrids.mockResolvedValue([]);
+    it("creates and activates the default grid on first run", async () => {
+      await gridManagerStore.init();
+
+      expect(gridManagerStore.layoutGrids).toHaveLength(1);
+      expect(gridManagerStore.layoutGrids[0]).toMatchObject(DEFAULT_GRID_TEMPLATE);
+      expect(gridOverlayStore.activeLayoutGridId).toBe(gridManagerStore.layoutGrids[0].id);
+      expect(gridOverlayStore.activeLayoutGrid).toMatchObject(DEFAULT_GRID_TEMPLATE);
+    });
+
+    it("keeps a stored active grid that still exists", async () => {
+      await db.addGrid(grid());
+      const second = await db.addGrid(grid({ columns: 6 }));
+      db.storeSettings("gridOverlay", { activeLayoutGridId: second });
+
+      await gridManagerStore.init();
+
+      expect(gridOverlayStore.activeLayoutGridId).toBe(second);
+    });
+
+    it("activates the first grid when the stored one was deleted", async () => {
+      const first = await db.addGrid(grid());
+      db.storeSettings("gridOverlay", { activeLayoutGridId: "deleted" });
+
+      await gridManagerStore.init();
+
+      expect(gridOverlayStore.activeLayoutGridId).toBe(first);
+    });
+
+    it("lists grids oldest first", async () => {
+      const a = await db.addGrid(grid({ columns: 2 }));
+      const b = await db.addGrid(grid({ columns: 3 }));
+
+      await gridManagerStore.init();
+
+      expect(gridManagerStore.layoutGrids.map((g) => g.id)).toEqual([a, b]);
+    });
+
+    it("only initializes once, so concurrent inits create one default grid", async () => {
+      await Promise.all([gridManagerStore.init(), gridManagerStore.init()]);
+      await gridManagerStore.init();
+
+      expect(db.addGrid).toHaveBeenCalledTimes(1);
+      expect(gridManagerStore.layoutGrids).toHaveLength(1);
+    });
+
+    it("reports load failures and still finishes", async () => {
+      db.getAllGrids.mockRejectedValueOnce(new Error("broken"));
 
       await gridManagerStore.init();
 
       expect(gridManagerStore.initialized).toBe(true);
-      expect(addGrid).toHaveBeenCalled();
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "activeLayoutGridId", "mock-grid-id");
-    });
-
-    it("loads existing grids from database", async () => {
-      const mockGrids = [
-        { id: "grid-1", name: "Grid 1", createdAt: Date.now() },
-        { id: "grid-2", name: "Grid 2", createdAt: Date.now() }
-      ];
-      getAllGrids.mockResolvedValue(mockGrids);
-      getSettingsByGroup.mockResolvedValue({ activeLayoutGridId: "grid-1" });
-
-      await gridManagerStore.init();
-
-      expect(gridManagerStore.layoutGrids).toEqual(mockGrids);
-      expect(addGrid).not.toHaveBeenCalled();
-    });
-
-    it("sets first grid as active if current active grid does not exist", async () => {
-      const mockGrids = [{ id: "grid-1", name: "Grid 1", createdAt: Date.now() }];
-      getAllGrids.mockResolvedValue(mockGrids);
-      getSettingsByGroup.mockResolvedValue({ activeLayoutGridId: "non-existent" });
-
-      await gridManagerStore.init();
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "activeLayoutGridId", "grid-1");
-    });
-
-    it("sets first grid as active if no active grid in settings", async () => {
-      const mockGrids = [{ id: "grid-1", name: "Grid 1", createdAt: Date.now() }];
-      getAllGrids.mockResolvedValue(mockGrids);
-      getSettingsByGroup.mockResolvedValue({});
-
-      await gridManagerStore.init();
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "activeLayoutGridId", "grid-1");
-    });
-
-    it("only initializes once", async () => {
-      await gridManagerStore.init();
-      await gridManagerStore.init();
-
-      expect(getAllGrids).toHaveBeenCalledTimes(1);
-    });
-
-    it("handles database errors gracefully", async () => {
-      const error = new Error("Database error");
-      getAllGrids.mockRejectedValue(error);
-
-      await gridManagerStore.init();
-
-      expect(gridManagerStore.initialized).toBe(true);
-      expect(toastStore.showError).toHaveBeenCalledWith(error, "Failed to load grids");
+      expect(toastStore.showError).toHaveBeenCalledWith(expect.any(Error), "Failed to load grids");
     });
   });
 
-  describe("toggleSpacingGrid", () => {
+  describe("CRUD", () => {
     beforeEach(async () => {
       await gridManagerStore.init();
     });
 
-    it("toggles showSpacingGrid from false to true", () => {
-      gridOverlayStore.showSpacingGrid = false;
+    it("adds a valid grid and makes it active", async () => {
+      const id = await gridManagerStore.add(grid({ width: "960px", columns: 16 }));
 
-      gridManagerStore.toggleSpacingGrid();
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "showSpacingGrid", true);
+      expect(id).toBeDefined();
+      expect(gridManagerStore.layoutGrids).toHaveLength(2);
+      expect(gridOverlayStore.activeLayoutGridId).toBe(id);
+      expect(gridOverlayStore.activeLayoutGrid?.columns).toBe(16);
     });
 
-    it("toggles showSpacingGrid from true to false", () => {
-      gridOverlayStore.showSpacingGrid = true;
-
-      gridManagerStore.toggleSpacingGrid();
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "showSpacingGrid", false);
-    });
-  });
-
-  describe("updateSpacingGridHeight", () => {
-    beforeEach(async () => {
-      await gridManagerStore.init();
-    });
-
-    it("updates spacing grid height", () => {
-      gridManagerStore.updateSpacingGridHeight("1rem");
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "spacingGridHeight", "1rem");
-    });
-
-    it("appends px to a bare number", () => {
-      gridManagerStore.updateSpacingGridHeight("12");
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "spacingGridHeight", "12px");
-    });
-
-    it("rejects an invalid height without saving it", () => {
-      gridManagerStore.updateSpacingGridHeight("banana");
-
-      expect(updateSetting).not.toHaveBeenCalledWith("gridOverlay", "spacingGridHeight", expect.anything());
-      expect(toastStore.showError).toHaveBeenCalled();
-    });
-  });
-
-  describe("updateSpacingGridColor", () => {
-    beforeEach(async () => {
-      await gridManagerStore.init();
-    });
-
-    it("updates spacing grid color", () => {
-      gridManagerStore.updateSpacingGridColor("#ff0000");
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "spacingGridColor", "#ff0000");
-    });
-
-    it("rejects an invalid color without saving it", () => {
-      gridManagerStore.updateSpacingGridColor("banana");
-
-      expect(updateSetting).not.toHaveBeenCalledWith("gridOverlay", "spacingGridColor", expect.anything());
-      expect(toastStore.showError).toHaveBeenCalled();
-    });
-  });
-
-  describe("toggleLayoutGrid", () => {
-    beforeEach(async () => {
-      await gridManagerStore.init();
-    });
-
-    it("toggles showLayoutGrid from false to true", () => {
-      gridOverlayStore.showLayoutGrid = false;
-
-      gridManagerStore.toggleLayoutGrid();
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "showLayoutGrid", true);
-    });
-
-    it("toggles showLayoutGrid from true to false", () => {
-      gridOverlayStore.showLayoutGrid = true;
-
-      gridManagerStore.toggleLayoutGrid();
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "showLayoutGrid", false);
-    });
-  });
-
-  describe("updateLayoutGridColor", () => {
-    beforeEach(async () => {
-      await gridManagerStore.init();
-    });
-
-    it("updates layout grid color", () => {
-      gridManagerStore.updateLayoutGridColor("#00ff00");
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "layoutGridColor", "#00ff00");
-    });
-
-    it("rejects an invalid color without saving it", () => {
-      gridManagerStore.updateLayoutGridColor("not-a-color");
-
-      expect(updateSetting).not.toHaveBeenCalledWith("gridOverlay", "layoutGridColor", expect.anything());
-      expect(toastStore.showError).toHaveBeenCalled();
-    });
-  });
-
-  describe("setActiveLayoutGrid", () => {
-    beforeEach(async () => {
-      await gridManagerStore.init();
-    });
-
-    it("sets active layout grid", async () => {
-      await gridManagerStore.setActiveLayoutGrid("grid-2");
-
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "activeLayoutGridId", "grid-2");
-    });
-
-    it("handles errors and shows toast", async () => {
-      const error = new Error("Update failed");
-      updateSetting.mockRejectedValue(error);
-
-      await expect(gridManagerStore.setActiveLayoutGrid("grid-2")).resolves.toBeUndefined();
-      expect(toastStore.showError).toHaveBeenCalledWith(error, "Failed to set active grid");
-    });
-  });
-
-  describe("add", () => {
-    beforeEach(async () => {
-      await gridManagerStore.init();
-      // Clear mocks after init to avoid counting calls made during init
-      addGrid.mockClear();
-      updateSetting.mockClear();
-      toastStore.showError.mockClear();
-    });
-
-    it("adds a new grid with valid config", async () => {
-      const gridConfig = { name: "New Grid", columns: 12 };
-      validateLayoutGridConfig.mockReturnValue({ success: true, data: gridConfig });
-      addGrid.mockResolvedValue("new-grid-id");
-      getAllGrids.mockResolvedValue([{ id: "new-grid-id", ...gridConfig, createdAt: Date.now() }]);
-
-      const id = await gridManagerStore.add(gridConfig as never);
-
-      expect(id).toBe("new-grid-id");
-      expect(addGrid).toHaveBeenCalledWith(gridConfig);
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "activeLayoutGridId", "new-grid-id");
-    });
-
-    it("returns undefined for invalid config", async () => {
-      validateLayoutGridConfig.mockReturnValue({ success: false, error: "Invalid config" });
-
-      const id = await gridManagerStore.add({} as never);
+    it("rejects an invalid grid without saving it", async () => {
+      const id = await gridManagerStore.add(grid({ width: "abc" }));
 
       expect(id).toBeUndefined();
-      expect(toastStore.showError).toHaveBeenCalledWith("Invalid config");
-      expect(addGrid).not.toHaveBeenCalled();
-    });
-
-    it("handles database errors", async () => {
-      validateLayoutGridConfig.mockReturnValue({ success: true, data: {} });
-      addGrid.mockRejectedValue(new Error("Add failed"));
-
-      const id = await gridManagerStore.add({} as never);
-
-      expect(id).toBeUndefined();
+      expect(gridManagerStore.layoutGrids).toHaveLength(1);
       expect(toastStore.showError).toHaveBeenCalled();
     });
-  });
 
-  describe("delete", () => {
-    beforeEach(async () => {
-      const mockGrids = [
-        { id: "grid-1", name: "Grid 1", createdAt: Date.now() },
-        { id: "grid-2", name: "Grid 2", createdAt: Date.now() }
-      ];
-      getAllGrids.mockResolvedValue(mockGrids);
-      await gridManagerStore.init();
+    it("reports a failed add", async () => {
+      db.addGrid.mockRejectedValueOnce(new Error("quota"));
+
+      expect(await gridManagerStore.add(grid())).toBeUndefined();
+      expect(toastStore.showError).toHaveBeenCalledWith(expect.any(Error), "Failed to add grid");
     });
 
-    it("deletes a grid", async () => {
-      await gridManagerStore.delete("grid-2");
+    it("deletes an inactive grid and keeps the active one", async () => {
+      const active = gridOverlayStore.activeLayoutGridId;
+      const extra = await gridManagerStore.add(grid({ columns: 4 }));
+      await gridManagerStore.setActiveLayoutGrid(active);
 
-      expect(deleteGrid).toHaveBeenCalledWith("grid-2");
-      expect(gridManagerStore.layoutGrids.find((g) => g.id === "grid-2")).toBeUndefined();
+      await gridManagerStore.delete(extra!);
+
+      expect(gridManagerStore.layoutGrids.map((g) => g.id)).toEqual([active]);
+      expect(gridOverlayStore.activeLayoutGridId).toBe(active);
     });
 
-    it("sets next grid as active when deleting active grid", async () => {
-      gridOverlayStore.activeLayoutGridId = "grid-1";
+    it("activates the next grid when the active one is deleted", async () => {
+      const first = gridOverlayStore.activeLayoutGridId;
+      const second = await gridManagerStore.add(grid({ columns: 4 }));
 
-      await gridManagerStore.delete("grid-1");
+      await gridManagerStore.delete(second!);
 
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "activeLayoutGridId", "grid-2");
+      expect(gridOverlayStore.activeLayoutGridId).toBe(first);
     });
 
-    it("creates default grid when deleting last grid", async () => {
-      // Setup single grid
-      vi.resetModules();
-      const dbModule = await import("./database");
-      const toastModule = await import("./toastStore.svelte");
-      const gridOverlayModule = await import("./gridOverlayStore.svelte");
+    it("recreates the default grid when the last one is deleted", async () => {
+      await gridManagerStore.delete(gridOverlayStore.activeLayoutGridId);
 
-      getAllGrids = dbModule.getAllGrids as ReturnType<typeof vi.fn>;
-      addGrid = dbModule.addGrid as ReturnType<typeof vi.fn>;
-      deleteGrid = dbModule.deleteGrid as ReturnType<typeof vi.fn>;
-      updateSetting = dbModule.updateSetting as ReturnType<typeof vi.fn>;
-      toastStore = toastModule.toastStore as unknown as { showError: ReturnType<typeof vi.fn> };
-      gridOverlayStore = gridOverlayModule.gridOverlayStore as unknown as typeof gridOverlayStore;
-
-      getAllGrids.mockReset().mockResolvedValue([{ id: "only-grid", name: "Only Grid", createdAt: Date.now() }]);
-      addGrid.mockReset().mockResolvedValue("new-default-id");
-      deleteGrid.mockReset().mockResolvedValue(undefined);
-      updateSetting.mockReset().mockResolvedValue(undefined);
-
-      const module = await import("./gridManagerStore.svelte");
-      const store = module.gridManagerStore;
-
-      await store.init();
-      gridOverlayStore.activeLayoutGridId = "only-grid";
-
-      // After delete, getAllGrids returns new default grid
-      getAllGrids.mockResolvedValue([{ id: "new-default-id", name: "Default", createdAt: Date.now() }]);
-
-      await store.delete("only-grid");
-
-      expect(addGrid).toHaveBeenCalled();
-      expect(updateSetting).toHaveBeenCalledWith("gridOverlay", "activeLayoutGridId", "new-default-id");
+      expect(gridManagerStore.layoutGrids).toHaveLength(1);
+      expect(gridManagerStore.layoutGrids[0]).toMatchObject(DEFAULT_GRID_TEMPLATE);
+      expect(gridOverlayStore.activeLayoutGridId).toBe(gridManagerStore.layoutGrids[0].id);
     });
 
-    it("handles delete errors", async () => {
-      deleteGrid.mockRejectedValue(new Error("Delete failed"));
+    it("reports a failed delete and keeps the grid", async () => {
+      db.deleteGrid.mockRejectedValueOnce(new Error("locked"));
 
-      await gridManagerStore.delete("grid-1");
+      await gridManagerStore.delete(gridOverlayStore.activeLayoutGridId);
 
-      expect(toastStore.showError).toHaveBeenCalled();
-    });
-  });
-
-  describe("reset", () => {
-    beforeEach(async () => {
-      await gridManagerStore.init();
+      expect(gridManagerStore.layoutGrids).toHaveLength(1);
+      expect(toastStore.showError).toHaveBeenCalledWith(expect.any(Error), "Failed to delete grid");
     });
 
-    it("resets all grids and settings to defaults", async () => {
-      await gridManagerStore.reset();
-
-      expect(resetGrids).toHaveBeenCalled();
-      expect(resetGridOverlaySettings).toHaveBeenCalled();
-      expect(addGrid).toHaveBeenCalled();
-      expect(gridOverlayStore.syncSettings).toHaveBeenCalled();
-    });
-
-    it("handles reset errors", async () => {
-      resetGrids.mockRejectedValue(new Error("Reset failed"));
+    it("resets grids and overlay settings", async () => {
+      await gridManagerStore.add(grid({ columns: 4 }));
+      gridManagerStore.toggleLayoutGrid();
+      gridManagerStore.updateSpacingGridHeight("20px");
 
       await gridManagerStore.reset();
 
-      expect(toastStore.showError).toHaveBeenCalled();
+      expect(gridManagerStore.layoutGrids).toHaveLength(1);
+      expect(gridManagerStore.layoutGrids[0]).toMatchObject(DEFAULT_GRID_TEMPLATE);
+      expect(gridOverlayStore.activeLayoutGridId).toBe(gridManagerStore.layoutGrids[0].id);
+      expect(gridOverlayStore.showLayoutGrid).toBe(DEFAULT_GRID_OVERLAY_SETTINGS.showLayoutGrid);
+      expect(gridOverlayStore.spacingGridHeight).toBe(DEFAULT_GRID_OVERLAY_SETTINGS.spacingGridHeight);
     });
   });
 
-  describe("settings error handling", () => {
+  describe("overlay settings from the manager", () => {
     beforeEach(async () => {
       await gridManagerStore.init();
     });
 
-    it("shows toast on updateSpacingGridHeight error", async () => {
-      updateSetting.mockRejectedValue(new Error("Update failed"));
-
-      gridManagerStore.updateSpacingGridHeight("12");
-
-      await vi.waitFor(() => {
-        expect(toastStore.showError).toHaveBeenCalled();
-      });
-    });
-
-    it("shows toast on updateSpacingGridColor error", async () => {
-      updateSetting.mockRejectedValue(new Error("Update failed"));
-
-      gridManagerStore.updateSpacingGridColor("#ff0000");
-
-      await vi.waitFor(() => {
-        expect(toastStore.showError).toHaveBeenCalled();
-      });
-    });
-
-    it("shows toast on toggleSpacingGrid error", async () => {
-      updateSetting.mockRejectedValue(new Error("Update failed"));
-
+    it("toggles the grids", () => {
+      gridManagerStore.toggleLayoutGrid();
       gridManagerStore.toggleSpacingGrid();
 
-      await vi.waitFor(() => {
-        expect(toastStore.showError).toHaveBeenCalled();
+      expect(gridOverlayStore.showLayoutGrid).toBe(!DEFAULT_GRID_OVERLAY_SETTINGS.showLayoutGrid);
+      expect(gridOverlayStore.showSpacingGrid).toBe(!DEFAULT_GRID_OVERLAY_SETTINGS.showSpacingGrid);
+    });
+
+    it.each([
+      ["1rem", "1rem"],
+      ["12", "12px"],
+      [" 8px ", "8px"]
+    ])("sets the spacing grid height %j as %j", (input, expected) => {
+      gridManagerStore.updateSpacingGridHeight(input);
+
+      expect(gridOverlayStore.spacingGridHeight).toBe(expected);
+    });
+
+    it("sets valid colors, including any CSS color syntax", () => {
+      gridManagerStore.updateSpacingGridColor("hsl(0 100% 50% / 0.1)");
+      gridManagerStore.updateLayoutGridColor("rebeccapurple");
+
+      expect(gridOverlayStore.spacingGridColor).toBe("hsl(0 100% 50% / 0.1)");
+      expect(gridOverlayStore.layoutGridColor).toBe("rebeccapurple");
+    });
+
+    it.each([
+      ["updateSpacingGridHeight", "spacingGridHeight", "banana"],
+      ["updateSpacingGridColor", "spacingGridColor", "banana"],
+      ["updateLayoutGridColor", "layoutGridColor", "not-a-color"]
+    ] as const)("%s rejects %j without changing it", (method, field, value) => {
+      const before = gridOverlayStore[field];
+
+      gridManagerStore[method](value);
+
+      expect(gridOverlayStore[field]).toBe(before);
+      expect(toastStore.showError).toHaveBeenCalled();
+    });
+
+    it("persists the changes", async () => {
+      gridManagerStore.toggleSpacingGrid();
+      gridManagerStore.updateSpacingGridColor("#f00");
+
+      await flushSettings();
+
+      expect(db.storedSettings("gridOverlay")).toMatchObject({
+        showSpacingGrid: !DEFAULT_GRID_OVERLAY_SETTINGS.showSpacingGrid,
+        spacingGridColor: "#f00"
       });
     });
 
-    it("shows toast on toggleLayoutGrid error", async () => {
-      updateSetting.mockRejectedValue(new Error("Update failed"));
+    it("reports a failed save", async () => {
+      db.saveSettings.mockRejectedValueOnce(new Error("quota"));
 
       gridManagerStore.toggleLayoutGrid();
+      await flushSettings();
 
-      await vi.waitFor(() => {
-        expect(toastStore.showError).toHaveBeenCalled();
-      });
-    });
-
-    it("shows toast on updateLayoutGridColor error", async () => {
-      updateSetting.mockRejectedValue(new Error("Update failed"));
-
-      gridManagerStore.updateLayoutGridColor("#00ff00");
-
-      await vi.waitFor(() => {
-        expect(toastStore.showError).toHaveBeenCalled();
-      });
+      expect(toastStore.showError).toHaveBeenCalledWith(expect.any(Error), "Failed to save settings");
     });
   });
 });

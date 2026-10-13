@@ -13,9 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the database module
 vi.mock("./database", () => ({
-  getMockup: vi.fn().mockResolvedValue(undefined),
-  getSettingsByGroup: vi.fn().mockResolvedValue({}),
-  updateSetting: vi.fn().mockResolvedValue(undefined)
+  getMockupImage: vi.fn().mockResolvedValue(undefined),
+  getSettings: vi.fn().mockResolvedValue(undefined),
+  saveSettings: vi.fn().mockResolvedValue(undefined)
 }));
 
 // Mock toastStore
@@ -31,13 +31,15 @@ vi.mock("./toastStore.svelte", () => ({
 const at = (e: { clientX: number; clientY: number }): Position => ({ x: e.clientX, y: e.clientY });
 
 describe("mockupOverlayStore", () => {
+  let flushSettings: typeof import("~/platform/settings.svelte").flushSettings;
   let mockupOverlayStore: typeof import("./mockupOverlayStore.svelte").mockupOverlayStore;
-  let getMockup: ReturnType<typeof vi.fn>;
-  let getSettingsByGroup: ReturnType<typeof vi.fn>;
-  let updateSetting: ReturnType<typeof vi.fn>;
+  let getMockupImage: ReturnType<typeof vi.fn>;
+  let getSettings: ReturnType<typeof vi.fn>;
+  let saveSettings: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
+    flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
 
     // Mock URL.createObjectURL and URL.revokeObjectURL while preserving URL constructor
     const OriginalURL = globalThis.URL;
@@ -46,18 +48,23 @@ describe("mockupOverlayStore", () => {
 
     // Get fresh mocks
     const dbModule = await import("./database");
-    getMockup = dbModule.getMockup as ReturnType<typeof vi.fn>;
-    getSettingsByGroup = dbModule.getSettingsByGroup as ReturnType<typeof vi.fn>;
-    updateSetting = dbModule.updateSetting as ReturnType<typeof vi.fn>;
+    getMockupImage = dbModule.getMockupImage as ReturnType<typeof vi.fn>;
+    getSettings = dbModule.getSettings as ReturnType<typeof vi.fn>;
+    saveSettings = dbModule.saveSettings as ReturnType<typeof vi.fn>;
 
     // Reset mocks
-    getMockup.mockReset().mockResolvedValue(undefined);
-    getSettingsByGroup.mockReset().mockResolvedValue({});
-    updateSetting.mockReset().mockResolvedValue(undefined);
+    getMockupImage.mockReset().mockResolvedValue(undefined);
+    getSettings.mockReset().mockResolvedValue({});
+    saveSettings.mockReset().mockResolvedValue(undefined);
 
     // Import fresh store
     const module = await import("./mockupOverlayStore.svelte");
     mockupOverlayStore = module.mockupOverlayStore;
+  });
+
+  // Don't let this test's pending saves land in the next test
+  afterEach(async () => {
+    await flushSettings();
   });
 
   describe("initial state", () => {
@@ -77,7 +84,7 @@ describe("mockupOverlayStore", () => {
 
   describe("init", () => {
     it("loads settings from database", async () => {
-      getSettingsByGroup.mockResolvedValue({
+      getSettings.mockResolvedValue({
         activeMockupId: "test-id",
         isHidden: true,
         isLocked: true,
@@ -101,7 +108,7 @@ describe("mockupOverlayStore", () => {
     });
 
     it("sets mode to locked if isLocked is true", async () => {
-      getSettingsByGroup.mockResolvedValue({ isLocked: true });
+      getSettings.mockResolvedValue({ isLocked: true });
 
       await mockupOverlayStore.init();
 
@@ -112,7 +119,7 @@ describe("mockupOverlayStore", () => {
       await mockupOverlayStore.init();
       await mockupOverlayStore.init();
 
-      expect(getSettingsByGroup).toHaveBeenCalledTimes(1);
+      expect(getSettings).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -229,6 +236,8 @@ describe("mockupOverlayStore", () => {
         vi.resetModules();
         const module = await import("./mockupOverlayStore.svelte");
         const store = module.mockupOverlayStore;
+        // afterEach flushes this instance\'s pending saves
+        flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
 
         await store.init();
         store.toggleLock();
@@ -391,10 +400,14 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.opacity).toBe(0.5);
     });
 
-    it("persists opacity changes", () => {
+    it("persists opacity changes", async () => {
       mockupOverlayStore.adjustOpacity(1);
 
-      expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "opacity", expect.any(Number));
+      await flushSettings();
+      expect(saveSettings).toHaveBeenLastCalledWith(
+        "mockupOverlay",
+        expect.objectContaining({ opacity: expect.any(Number) })
+      );
     });
   });
 
@@ -413,10 +426,11 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.isHidden).toBe(false);
     });
 
-    it("persists visibility changes", () => {
+    it("persists visibility changes", async () => {
       mockupOverlayStore.toggleVisibility();
 
-      expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "isHidden", true);
+      await flushSettings();
+      expect(saveSettings).toHaveBeenLastCalledWith("mockupOverlay", expect.objectContaining({ isHidden: true }));
     });
 
     it("exits solid/zoomed mode when toggling visibility", () => {
@@ -527,11 +541,21 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.alignmentY).toBeNull();
     });
 
-    it("persists position after persistPosition call", () => {
-      mockupOverlayStore.move(50, 50);
-      mockupOverlayStore.persistPosition();
+    it("saves moves made in one task as a single write", async () => {
+      const initial = { ...mockupOverlayStore.position };
 
-      expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "position", expect.any(Object));
+      for (let i = 0; i < 10; i++) mockupOverlayStore.move(5, 5);
+      await Promise.resolve();
+
+      expect(saveSettings).toHaveBeenCalledTimes(1);
+      expect(saveSettings).toHaveBeenLastCalledWith(
+        "mockupOverlay",
+        expect.objectContaining({
+          position: { x: initial.x + 50, y: initial.y + 50 },
+          alignmentX: null,
+          alignmentY: null
+        })
+      );
     });
   });
 
@@ -557,11 +581,13 @@ describe("mockupOverlayStore", () => {
       // Reset with 0.5 scale
       vi.resetModules();
       const dbModule = await import("./database");
-      const gsModule = dbModule.getSettingsByGroup as ReturnType<typeof vi.fn>;
+      const gsModule = dbModule.getSettings as ReturnType<typeof vi.fn>;
       gsModule.mockReset().mockResolvedValue({ scale: 0.5 });
 
       const module = await import("./mockupOverlayStore.svelte");
       const store = module.mockupOverlayStore;
+      // afterEach flushes this instance\'s pending saves
+      flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
 
       await store.init();
       expect(store.scale).toBe(0.5);
@@ -570,11 +596,16 @@ describe("mockupOverlayStore", () => {
       expect(store.scale).toBe(1);
     });
 
-    it("persists scale and position changes", () => {
+    it("persists scale and position changes", async () => {
       mockupOverlayStore.cycleScale();
 
-      expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "scale", 0.5);
-      expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "position", expect.any(Object));
+      await flushSettings();
+      expect(saveSettings).toHaveBeenLastCalledWith("mockupOverlay", expect.objectContaining({ scale: 0.5 }));
+      await flushSettings();
+      expect(saveSettings).toHaveBeenLastCalledWith(
+        "mockupOverlay",
+        expect.objectContaining({ position: expect.any(Object) })
+      );
     });
 
     it("clears alignment when cycling scale", () => {
@@ -666,10 +697,14 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.mode).toBe("visible");
     });
 
-    it("persists activeMockupId change", () => {
+    it("persists activeMockupId change", async () => {
       mockupOverlayStore.setActiveMockup("new-id");
 
-      expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "activeMockupId", "new-id");
+      await flushSettings();
+      expect(saveSettings).toHaveBeenLastCalledWith(
+        "mockupOverlay",
+        expect.objectContaining({ activeMockupId: "new-id" })
+      );
     });
   });
 
@@ -685,7 +720,7 @@ describe("mockupOverlayStore", () => {
       }
     }
 
-    const mockup = (id: string) => ({ id, originalBuffer: new ArrayBuffer(1), mimeType: "image/png" });
+    const mockup = (id: string) => new Blob([id], { type: "image/png" });
     const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
     beforeEach(() => {
@@ -700,7 +735,7 @@ describe("mockupOverlayStore", () => {
     });
 
     it("applies the default top-center alignment once the image size is known", async () => {
-      getMockup.mockImplementation(async (id: string) => mockup(id));
+      getMockupImage.mockImplementation(async (id: string) => mockup(id));
       await mockupOverlayStore.init();
 
       mockupOverlayStore.setActiveMockup("a");
@@ -711,7 +746,7 @@ describe("mockupOverlayStore", () => {
     });
 
     it("re-aligns when switching to a mockup of a different width", async () => {
-      getMockup.mockImplementation(async (id: string) => mockup(id));
+      getMockupImage.mockImplementation(async (id: string) => mockup(id));
       await mockupOverlayStore.init();
       mockupOverlayStore.setActiveMockup("a");
       await flush();
@@ -726,7 +761,7 @@ describe("mockupOverlayStore", () => {
 
     it("ignores a slower load that was superseded by a newer selection", async () => {
       let resolveA: (value: ReturnType<typeof mockup>) => void = () => {};
-      getMockup.mockImplementation((id: string) =>
+      getMockupImage.mockImplementation((id: string) =>
         id === "a" ? new Promise((resolve) => (resolveA = resolve)) : Promise.resolve(mockup(id))
       );
       await mockupOverlayStore.init();
@@ -744,8 +779,8 @@ describe("mockupOverlayStore", () => {
     });
 
     it("keeps the active image URL usable when re-initialized (remount)", async () => {
-      getSettingsByGroup.mockResolvedValue({ activeMockupId: "a" });
-      getMockup.mockImplementation(async (id: string) => mockup(id));
+      getSettings.mockResolvedValue({ activeMockupId: "a" });
+      getMockupImage.mockImplementation(async (id: string) => mockup(id));
       await mockupOverlayStore.init();
       const url = mockupOverlayStore.activeMockupUrl;
 
@@ -769,7 +804,7 @@ describe("mockupOverlayStore", () => {
 
     beforeEach(async () => {
       vi.stubGlobal("Image", FakeImage);
-      getMockup.mockResolvedValue({ id: "a", originalBuffer: new ArrayBuffer(1), mimeType: "image/png" });
+      getMockupImage.mockResolvedValue(new Blob(["a"], { type: "image/png" }));
       await mockupOverlayStore.init();
       mockupOverlayStore.setActiveMockup("a");
       await flush();
@@ -909,10 +944,11 @@ describe("mockupOverlayStore", () => {
         expect(mockupOverlayStore.opacity).toBe(0.9);
       });
 
-      it("persists opacity change", () => {
+      it("persists opacity change", async () => {
         mockupOverlayStore.setOpacity(0.6);
 
-        expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "opacity", 0.6);
+        await flushSettings();
+        expect(saveSettings).toHaveBeenLastCalledWith("mockupOverlay", expect.objectContaining({ opacity: 0.6 }));
       });
 
       it("does not change opacity when not in visible or locked mode", () => {
@@ -950,13 +986,17 @@ describe("mockupOverlayStore", () => {
         expect(mockupOverlayStore.position.y).toBe(initialPosition.y + 100);
       });
 
-      it("persists the position when the drag ends", () => {
+      it("persists the position when the drag ends", async () => {
         mockupOverlayStore.beginDrag({ x: 100, y: 100 });
         mockupOverlayStore.dragTo({ x: 130, y: 90 });
         mockupOverlayStore.endDrag();
 
         expect(mockupOverlayStore.mode).toBe("visible");
-        expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "position", mockupOverlayStore.position);
+        await flushSettings();
+        expect(saveSettings).toHaveBeenLastCalledWith(
+          "mockupOverlay",
+          expect.objectContaining({ position: mockupOverlayStore.position })
+        );
       });
 
       it("clears alignment after a drag", () => {
@@ -969,14 +1009,15 @@ describe("mockupOverlayStore", () => {
         expect(mockupOverlayStore.alignmentY).toBeNull();
       });
 
-      it("ignores dragTo and endDrag without a drag", () => {
+      it("ignores dragTo and endDrag without a drag", async () => {
         const initialPosition = { ...mockupOverlayStore.position };
 
         mockupOverlayStore.dragTo({ x: 500, y: 500 });
         mockupOverlayStore.endDrag();
 
         expect(mockupOverlayStore.position).toEqual(initialPosition);
-        expect(updateSetting).not.toHaveBeenCalledWith("mockupOverlay", "position", expect.anything());
+        await flushSettings();
+        expect(saveSettings).not.toHaveBeenCalled();
       });
     });
 

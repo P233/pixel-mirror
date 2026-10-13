@@ -7,12 +7,12 @@
  * - grids: Grid manager panel
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the database module
 vi.mock("./database", () => ({
-  getSettingsByGroup: vi.fn().mockResolvedValue({}),
-  updateSetting: vi.fn().mockResolvedValue(undefined)
+  getSettings: vi.fn().mockResolvedValue(undefined),
+  saveSettings: vi.fn().mockResolvedValue(undefined)
 }));
 
 // Mock keyboardStore
@@ -31,30 +31,37 @@ vi.mock("./toastStore.svelte", () => ({
 }));
 
 describe("dockStore", () => {
+  let flushSettings: typeof import("~/platform/settings.svelte").flushSettings;
   let dockStore: typeof import("./dockStore.svelte").dockStore;
-  let getSettingsByGroup: ReturnType<typeof vi.fn>;
-  let updateSetting: ReturnType<typeof vi.fn>;
+  let getSettings: ReturnType<typeof vi.fn>;
+  let saveSettings: ReturnType<typeof vi.fn>;
   let keyboardStore: { resetModifierStates: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     vi.resetModules();
+    flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
 
     // Get fresh mocks
     const dbModule = await import("./database");
     const kbModule = await import("./keyboardStore.svelte");
 
-    getSettingsByGroup = dbModule.getSettingsByGroup as ReturnType<typeof vi.fn>;
-    updateSetting = dbModule.updateSetting as ReturnType<typeof vi.fn>;
+    getSettings = dbModule.getSettings as ReturnType<typeof vi.fn>;
+    saveSettings = dbModule.saveSettings as ReturnType<typeof vi.fn>;
     keyboardStore = kbModule.keyboardStore as unknown as { resetModifierStates: ReturnType<typeof vi.fn> };
 
     // Reset mocks
-    getSettingsByGroup.mockReset().mockResolvedValue({});
-    updateSetting.mockReset().mockResolvedValue(undefined);
+    getSettings.mockReset().mockResolvedValue({});
+    saveSettings.mockReset().mockResolvedValue(undefined);
     keyboardStore.resetModifierStates.mockReset();
 
     // Import fresh store
     const module = await import("./dockStore.svelte");
     dockStore = module.dockStore;
+  });
+
+  // Don't let this test's pending saves land in the next test
+  afterEach(async () => {
+    await flushSettings();
   });
 
   describe("initial state", () => {
@@ -73,7 +80,7 @@ describe("dockStore", () => {
 
   describe("init", () => {
     it("loads settings from database", async () => {
-      getSettingsByGroup.mockResolvedValue({
+      getSettings.mockResolvedValue({
         position: "top",
         theme: "dark"
       });
@@ -89,11 +96,11 @@ describe("dockStore", () => {
       await dockStore.init();
       await dockStore.init();
 
-      expect(getSettingsByGroup).toHaveBeenCalledTimes(1);
+      expect(getSettings).toHaveBeenCalledTimes(1);
     });
 
     it("keeps defaults when no settings in database", async () => {
-      getSettingsByGroup.mockResolvedValue({});
+      getSettings.mockResolvedValue({});
 
       await dockStore.init();
 
@@ -207,11 +214,13 @@ describe("dockStore", () => {
     });
 
     it("toggles from top to bottom", async () => {
-      getSettingsByGroup.mockResolvedValue({ position: "top" });
+      getSettings.mockResolvedValue({ position: "top" });
       vi.resetModules();
 
       const module = await import("./dockStore.svelte");
       const store = module.dockStore;
+      // afterEach flushes this instance\'s pending saves
+      flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
       await store.init();
 
       expect(store.position).toBe("top");
@@ -221,10 +230,11 @@ describe("dockStore", () => {
       expect(store.position).toBe("bottom");
     });
 
-    it("persists position change", () => {
+    it("persists position change", async () => {
       dockStore.togglePosition();
 
-      expect(updateSetting).toHaveBeenCalledWith("dock", "position", "top");
+      await flushSettings();
+      expect(saveSettings).toHaveBeenLastCalledWith("dock", expect.objectContaining({ position: "top" }));
     });
   });
 
@@ -242,11 +252,13 @@ describe("dockStore", () => {
     });
 
     it("toggles from dark to light", async () => {
-      getSettingsByGroup.mockResolvedValue({ theme: "dark" });
+      getSettings.mockResolvedValue({ theme: "dark" });
       vi.resetModules();
 
       const module = await import("./dockStore.svelte");
       const store = module.dockStore;
+      // afterEach flushes this instance\'s pending saves
+      flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
       await store.init();
 
       expect(store.theme).toBe("dark");
@@ -256,10 +268,11 @@ describe("dockStore", () => {
       expect(store.theme).toBe("light");
     });
 
-    it("persists theme change", () => {
+    it("persists theme change", async () => {
       dockStore.toggleTheme();
 
-      expect(updateSetting).toHaveBeenCalledWith("dock", "theme", "dark");
+      await flushSettings();
+      expect(saveSettings).toHaveBeenLastCalledWith("dock", expect.objectContaining({ theme: "dark" }));
     });
   });
 

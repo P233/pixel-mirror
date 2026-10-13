@@ -336,14 +336,6 @@ describe("GridManager component", () => {
     });
   });
 
-  describe("lifecycle", () => {
-    it("calls gridManagerStore.init() on mount", () => {
-      render(GridManager);
-
-      expect(mockManagerStore.init).toHaveBeenCalledTimes(1);
-    });
-  });
-
   describe("fieldset inputs", () => {
     it("renders spacing grid height fieldset", () => {
       const { container } = render(GridManager);

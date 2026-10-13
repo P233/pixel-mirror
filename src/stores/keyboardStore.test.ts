@@ -146,12 +146,6 @@ describe("keyboardStore", () => {
       expect(mockupOverlayStore.enterSolidMode).not.toHaveBeenCalled();
       expect(mockupOverlayStore.toggleLock).not.toHaveBeenCalled();
     });
-
-    it("does not persist position on arrow key release", () => {
-      window.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown" }));
-
-      expect(mockupOverlayStore.persistPosition).not.toHaveBeenCalled();
-    });
   });
 
   describe("Control key handling", () => {
@@ -342,15 +336,6 @@ describe("keyboardStore", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true }));
 
       expect(mockupOverlayStore.move).toHaveBeenCalledWith(10, 0);
-    });
-
-    it("persists position on arrow key release", () => {
-      mockupOverlayStore.mode = "visible";
-
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
-      window.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowRight" }));
-
-      expect(mockupOverlayStore.persistPosition).toHaveBeenCalled();
     });
 
     it("does not move in locked mode", () => {

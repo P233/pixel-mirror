@@ -202,16 +202,6 @@ function createKeyboardStore() {
         }
         break;
 
-      case "ArrowUp":
-      case "ArrowDown":
-      case "ArrowLeft":
-      case "ArrowRight":
-        // Persist position after arrow key movement
-        if (shouldHandleMockupEvents() && mockupOverlayStore.mode === "visible") {
-          mockupOverlayStore.persistPosition();
-        }
-        break;
-
       case "Control":
         if (isControlPressed) {
           isControlPressed = false;

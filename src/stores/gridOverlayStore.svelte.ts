@@ -1,84 +1,84 @@
 /**
  * Grid Overlay Store
  *
- * Manages grid overlay display settings.
- * Subscribes to settings events for automatic synchronization.
+ * Grid overlay display settings and the active layout grid.
  */
 
 // Constants
 import { DEFAULT_GRID_OVERLAY_SETTINGS } from "~/constants";
+// Platform
+import { createSettings } from "~/platform/settings.svelte";
 // Database
-import { getGrid, getSettingsByGroup } from "./database";
+import { getGrid } from "./database";
 // Stores
-import { settingsEventBus } from "./eventBus";
 import { toastStore } from "./toastStore.svelte";
+// Utils
+import { validateColor, validateCSSLength } from "~/utils/validation";
+
+const DEFAULT_SETTINGS: GridOverlaySettings = { activeLayoutGridId: "", ...DEFAULT_GRID_OVERLAY_SETTINGS };
+
+const isColor = (value: unknown) => typeof value === "string" && validateColor(value, "color").success;
+const isLength = (value: unknown) => typeof value === "string" && validateCSSLength(value, "length").success;
 
 function createGridOverlayStore() {
-  let showLayoutGrid = $state(DEFAULT_GRID_OVERLAY_SETTINGS.showLayoutGrid);
-  let activeLayoutGridId = $state<string>("");
-  let activeLayoutGridConfig = $state<LayoutGridConfig | undefined>(undefined);
-  let layoutGridColor = $state(DEFAULT_GRID_OVERLAY_SETTINGS.layoutGridColor);
+  const settings = createSettings("gridOverlay", DEFAULT_SETTINGS, {
+    activeLayoutGridId: (value) => typeof value === "string",
+    showLayoutGrid: (value) => typeof value === "boolean",
+    layoutGridColor: isColor,
+    showSpacingGrid: (value) => typeof value === "boolean",
+    spacingGridColor: isColor,
+    spacingGridHeight: isLength
+  });
 
-  let showSpacingGrid = $state(DEFAULT_GRID_OVERLAY_SETTINGS.showSpacingGrid);
-  let spacingGridColor = $state(DEFAULT_GRID_OVERLAY_SETTINGS.spacingGridColor);
-  let spacingGridHeight = $state(DEFAULT_GRID_OVERLAY_SETTINGS.spacingGridHeight);
+  let activeLayoutGridConfig = $state<LayoutGridConfig | undefined>(undefined);
 
   let initialized = $state(false);
   let initPromise: Promise<void> | null = null;
 
+  // Incremented on every load so a slow, superseded load can't overwrite a newer one
+  let loadToken = 0;
+
   async function loadActiveGrid(id: string) {
+    const token = ++loadToken;
     if (!id) {
       activeLayoutGridConfig = undefined;
       return;
     }
     try {
       const grid = await getGrid(id);
+      if (token !== loadToken) return;
       activeLayoutGridConfig = grid;
       if (!grid) {
         toastStore.showError(new Error("Grid not found."));
       }
     } catch (e) {
+      if (token !== loadToken) return;
       activeLayoutGridConfig = undefined;
       toastStore.showError(e, "Failed to load grid");
     }
   }
 
-  function applySettings(settings: Partial<GridOverlaySettings>) {
-    if (settings.showLayoutGrid !== undefined) showLayoutGrid = settings.showLayoutGrid;
-    if (settings.layoutGridColor !== undefined) layoutGridColor = settings.layoutGridColor;
-    if (settings.showSpacingGrid !== undefined) showSpacingGrid = settings.showSpacingGrid;
-    if (settings.spacingGridColor !== undefined) spacingGridColor = settings.spacingGridColor;
-    if (settings.spacingGridHeight !== undefined) spacingGridHeight = settings.spacingGridHeight;
-    if (settings.activeLayoutGridId !== undefined) {
-      activeLayoutGridId = settings.activeLayoutGridId;
-      loadActiveGrid(activeLayoutGridId);
-    }
-  }
-
-  // Subscribe to settings events for automatic synchronization
-  const unsubscribe = settingsEventBus.on("gridOverlay", applySettings);
-
   return {
     get activeLayoutGridId() {
-      return activeLayoutGridId;
+      return settings.current.activeLayoutGridId;
     },
     get activeLayoutGrid() {
       return activeLayoutGridConfig;
     },
     get showLayoutGrid() {
-      return showLayoutGrid;
+      return settings.current.showLayoutGrid;
     },
     get layoutGridColor() {
-      return layoutGridColor;
+      return settings.current.layoutGridColor;
     },
     get showSpacingGrid() {
-      return showSpacingGrid;
+      return settings.current.showSpacingGrid;
     },
     get spacingGridColor() {
-      return spacingGridColor;
+      return settings.current.spacingGridColor;
     },
     get spacingGridHeight() {
-      return spacingGridHeight;
+      return settings.current.spacingGridHeight;
     },
     get initialized() {
       return initialized;
@@ -89,16 +89,8 @@ function createGridOverlayStore() {
 
       initPromise = (async () => {
         try {
-          const settings = await getSettingsByGroup("gridOverlay");
-
-          if (settings.activeLayoutGridId !== undefined) activeLayoutGridId = settings.activeLayoutGridId;
-          if (settings.showLayoutGrid !== undefined) showLayoutGrid = settings.showLayoutGrid;
-          if (settings.layoutGridColor !== undefined) layoutGridColor = settings.layoutGridColor;
-          if (settings.showSpacingGrid !== undefined) showSpacingGrid = settings.showSpacingGrid;
-          if (settings.spacingGridColor !== undefined) spacingGridColor = settings.spacingGridColor;
-          if (settings.spacingGridHeight !== undefined) spacingGridHeight = settings.spacingGridHeight;
-
-          await loadActiveGrid(activeLayoutGridId);
+          await settings.load();
+          await loadActiveGrid(settings.current.activeLayoutGridId);
         } catch (e) {
           toastStore.showError(e, "Failed to load grid overlay settings");
         } finally {
@@ -110,10 +102,37 @@ function createGridOverlayStore() {
       return initPromise;
     },
 
-    // Manual sync for bulk updates (e.g., reset)
-    syncSettings: applySettings,
+    setActiveLayoutGrid: (id: string) => {
+      settings.update({ activeLayoutGridId: id });
+      return loadActiveGrid(id);
+    },
 
-    cleanup: unsubscribe
+    toggleLayoutGrid: () => {
+      settings.update({ showLayoutGrid: !settings.current.showLayoutGrid });
+    },
+
+    toggleSpacingGrid: () => {
+      settings.update({ showSpacingGrid: !settings.current.showSpacingGrid });
+    },
+
+    setLayoutGridColor: (color: string) => {
+      settings.update({ layoutGridColor: color });
+    },
+
+    setSpacingGridColor: (color: string) => {
+      settings.update({ spacingGridColor: color });
+    },
+
+    setSpacingGridHeight: (height: string) => {
+      settings.update({ spacingGridHeight: height });
+    },
+
+    /** Back to the default settings, showing the given layout grid */
+    reset: (activeLayoutGridId: string) => {
+      settings.reset();
+      settings.update({ activeLayoutGridId });
+      return loadActiveGrid(activeLayoutGridId);
+    }
   };
 }
 

@@ -1,517 +1,182 @@
+// @vitest-environment node
+// Node's Blob survives IndexedDB's structured clone; jsdom's doesn't
 /**
- * Database Layer Tests
- *
- * Tests IndexedDB operations for mockups, grids, and settings.
- * Uses fake-indexeddb for testing.
+ * Database layer tests against a real (in-memory) IndexedDB implementation
  */
 
+// Installs IDBRequest, IDBKeyRange etc. as globals; each test swaps in a fresh factory
+import "fake-indexeddb/auto";
+import { IDBFactory } from "fake-indexeddb";
+import { openDB } from "idb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock idb module since IndexedDB is not available in happy-dom
-const mockDb = {
-  getAll: vi.fn(),
-  get: vi.fn(),
-  put: vi.fn(),
-  delete: vi.fn(),
-  clear: vi.fn(),
-  transaction: vi.fn()
-};
+const DB_NAME = "PixelMirrorDB";
 
-const mockTransaction = {
-  objectStore: vi.fn(() => ({
-    get: vi.fn().mockResolvedValue(undefined),
-    put: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
-    clear: vi.fn().mockResolvedValue(undefined)
-  })),
-  done: Promise.resolve()
-};
+const gridInput = (overrides: Partial<GridInput> = {}): GridInput => ({
+  width: "1140px",
+  columns: 12,
+  gutterWidth: "24px",
+  isGutterOnOutside: true,
+  position: "center",
+  ...overrides
+});
 
-vi.mock("idb", () => ({
-  openDB: vi.fn(() => Promise.resolve(mockDb))
-}));
+const mockupInput = (name: string, content = name): MockupInput => ({
+  image: new Blob([content], { type: "image/png" }),
+  thumbnail: new Blob([`thumb-${content}`], { type: "image/png" }),
+  filename: name,
+  mimeType: "image/png",
+  width: 800,
+  height: 1500,
+  fileSize: content.length
+});
 
-// Mock eventBus
-vi.mock("./eventBus", () => ({
-  settingsEventBus: {
-    emit: vi.fn(),
-    on: vi.fn(() => () => {})
-  }
-}));
-
-describe("database operations", () => {
+describe("database", () => {
   let database: typeof import("./database");
-  let settingsEventBus: typeof import("./eventBus").settingsEventBus;
 
   beforeEach(async () => {
+    // A fresh, empty IndexedDB and a fresh module (no cached connection) for every test
+    globalThis.indexedDB = new IDBFactory();
     vi.resetModules();
-
-    // Reset mock implementations
-    mockDb.getAll.mockReset().mockResolvedValue([]);
-    mockDb.get.mockReset().mockResolvedValue(undefined);
-    mockDb.put.mockReset().mockResolvedValue(undefined);
-    mockDb.delete.mockReset().mockResolvedValue(undefined);
-    mockDb.clear.mockReset().mockResolvedValue(undefined);
-    mockDb.transaction.mockReset().mockReturnValue(mockTransaction);
-
-    // Import fresh modules
     database = await import("./database");
-    const eventBusModule = await import("./eventBus");
-    settingsEventBus = eventBusModule.settingsEventBus;
   });
 
-  describe("mockup operations", () => {
-    describe("getAllMockups", () => {
-      it("returns empty array when no mockups", async () => {
-        mockDb.getAll.mockResolvedValue([]);
+  describe("grids", () => {
+    it("adds, lists (oldest first), gets and deletes grids", async () => {
+      const a = await database.addGrid(gridInput({ columns: 2 }));
+      const b = await database.addGrid(gridInput({ columns: 3 }));
 
-        const result = await database.getAllMockups();
+      expect((await database.getAllGrids()).map((g) => g.id)).toEqual([a, b]);
+      expect(await database.getGrid(b)).toMatchObject({ id: b, columns: 3 });
 
-        expect(result).toEqual([]);
-      });
+      await database.deleteGrid(a);
+      expect((await database.getAllGrids()).map((g) => g.id)).toEqual([b]);
 
-      it("returns mockups sorted by createdAt descending", async () => {
-        const mockups = [
-          { id: "1", name: "first", createdAt: 1000 },
-          { id: "2", name: "second", createdAt: 2000 },
-          { id: "3", name: "third", createdAt: 1500 }
-        ];
-        mockDb.getAll.mockResolvedValue(mockups);
-
-        const result = await database.getAllMockups();
-
-        expect(result[0].id).toBe("2");
-        expect(result[1].id).toBe("3");
-        expect(result[2].id).toBe("1");
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.getAll.mockRejectedValue(new Error("DB error"));
-
-        await expect(database.getAllMockups()).rejects.toThrow("Failed to load mockups");
-      });
-    });
-
-    describe("getMockup", () => {
-      it("returns undefined when mockup not found", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue(undefined),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          clear: vi.fn().mockResolvedValue(undefined)
-        };
-        mockTransaction.objectStore.mockReturnValue(mockTxStore);
-
-        const result = await database.getMockup("non-existent");
-
-        expect(result).toBeUndefined();
-      });
-
-      it("returns mockup with originalBuffer when found", async () => {
-        const metadata = { id: "test-id", name: "test.png", mimeType: "image/png" };
-        const buffer = new ArrayBuffer(8);
-
-        let callCount = 0;
-        const mockTxStore = {
-          get: vi.fn().mockImplementation(() => {
-            callCount++;
-            return callCount === 1 ? Promise.resolve(metadata) : Promise.resolve(buffer);
-          }),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          clear: vi.fn().mockResolvedValue(undefined)
-        };
-        mockTransaction.objectStore.mockReturnValue(mockTxStore);
-
-        const result = await database.getMockup("test-id");
-
-        expect(result).toEqual({ ...metadata, originalBuffer: buffer });
-      });
-
-      it("returns undefined when metadata exists but buffer missing", async () => {
-        const metadata = { id: "test-id", name: "test.png" };
-
-        let callCount = 0;
-        const mockTxStore = {
-          get: vi.fn().mockImplementation(() => {
-            callCount++;
-            return callCount === 1 ? Promise.resolve(metadata) : Promise.resolve(undefined);
-          }),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          clear: vi.fn().mockResolvedValue(undefined)
-        };
-        mockTransaction.objectStore.mockReturnValue(mockTxStore);
-
-        const result = await database.getMockup("test-id");
-
-        expect(result).toBeUndefined();
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.transaction.mockImplementation(() => {
-          throw new Error("Transaction failed");
-        });
-
-        await expect(database.getMockup("test-id")).rejects.toThrow("Failed to get mockup");
-      });
-    });
-
-    describe("addMockups", () => {
-      it("adds single mockup", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue(undefined),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          clear: vi.fn().mockResolvedValue(undefined)
-        };
-        mockTransaction.objectStore.mockReturnValue(mockTxStore);
-
-        const input = {
-          filename: "test.png",
-          mimeType: "image/png",
-          originalBuffer: new ArrayBuffer(8),
-          thumbnailBuffer: new ArrayBuffer(4)
-        };
-
-        const ids = await database.addMockups(input);
-        expect(ids).toHaveLength(1);
-        expect(typeof ids[0]).toBe("string");
-      });
-
-      it("adds multiple mockups", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue(undefined),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          clear: vi.fn().mockResolvedValue(undefined)
-        };
-        mockTransaction.objectStore.mockReturnValue(mockTxStore);
-
-        const inputs = [
-          {
-            filename: "test1.png",
-            mimeType: "image/png",
-            originalBuffer: new ArrayBuffer(8),
-            thumbnailBuffer: new ArrayBuffer(4)
-          },
-          {
-            filename: "test2.png",
-            mimeType: "image/png",
-            originalBuffer: new ArrayBuffer(8),
-            thumbnailBuffer: new ArrayBuffer(4)
-          }
-        ];
-
-        const ids = await database.addMockups(inputs);
-        expect(ids).toHaveLength(2);
-        expect(typeof ids[0]).toBe("string");
-        expect(typeof ids[1]).toBe("string");
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.transaction.mockImplementation(() => {
-          throw new Error("Transaction failed");
-        });
-
-        const input = {
-          filename: "test.png",
-          mimeType: "image/png",
-          originalBuffer: new ArrayBuffer(8),
-          thumbnailBuffer: new ArrayBuffer(4)
-        };
-
-        await expect(database.addMockups(input)).rejects.toThrow("Failed to add mockups");
-      });
-    });
-
-    describe("deleteMockup", () => {
-      it("deletes mockup by id", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue(undefined),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          clear: vi.fn().mockResolvedValue(undefined)
-        };
-        mockTransaction.objectStore.mockReturnValue(mockTxStore);
-
-        await expect(database.deleteMockup("test-id")).resolves.toBeUndefined();
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.transaction.mockImplementation(() => {
-          throw new Error("Transaction failed");
-        });
-
-        await expect(database.deleteMockup("test-id")).rejects.toThrow("Failed to delete mockup");
-      });
-    });
-
-    describe("resetMockups", () => {
-      it("clears all mockups", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue(undefined),
-          put: vi.fn().mockResolvedValue(undefined),
-          delete: vi.fn().mockResolvedValue(undefined),
-          clear: vi.fn().mockResolvedValue(undefined)
-        };
-        mockTransaction.objectStore.mockReturnValue(mockTxStore);
-
-        await expect(database.resetMockups()).resolves.toBeUndefined();
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.transaction.mockImplementation(() => {
-          throw new Error("Transaction failed");
-        });
-
-        await expect(database.resetMockups()).rejects.toThrow("Failed to reset mockups");
-      });
+      await database.resetGrids();
+      expect(await database.getAllGrids()).toEqual([]);
     });
   });
 
-  describe("grid operations", () => {
-    describe("getAllGrids", () => {
-      it("returns empty array when no grids", async () => {
-        mockDb.getAll.mockResolvedValue([]);
+  describe("mockups", () => {
+    it("stores images as Blobs and lists metadata newest first", async () => {
+      const [first, second] = await database.addMockups([mockupInput("a.png"), mockupInput("b.png")]);
 
-        const result = await database.getAllGrids();
+      const mockups = await database.getAllMockups();
+      expect(mockups.map((m) => m.id)).toEqual([second, first]);
+      expect(mockups[0]).toMatchObject({ filename: "b.png", width: 800, height: 1500 });
+      expect(mockups[0].thumbnail).toBeInstanceOf(Blob);
+      expect(await mockups[0].thumbnail.text()).toBe("thumb-b.png");
+      expect(mockups[0]).not.toHaveProperty("image");
 
-        expect(result).toEqual([]);
-      });
-
-      it("returns grids sorted by createdAt ascending", async () => {
-        const grids = [
-          { id: "1", createdAt: 2000 },
-          { id: "2", createdAt: 1000 },
-          { id: "3", createdAt: 1500 }
-        ];
-        mockDb.getAll.mockResolvedValue(grids);
-
-        const result = await database.getAllGrids();
-
-        expect(result[0].id).toBe("2");
-        expect(result[1].id).toBe("3");
-        expect(result[2].id).toBe("1");
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.getAll.mockRejectedValue(new Error("DB error"));
-
-        await expect(database.getAllGrids()).rejects.toThrow("Failed to load grids");
-      });
+      const image = await database.getMockupImage(first);
+      expect(image).toBeInstanceOf(Blob);
+      expect(await image!.text()).toBe("a.png");
     });
 
-    describe("getGrid", () => {
-      it("returns grid by id", async () => {
-        const grid = { id: "test-id", width: "1200px", columns: 12 };
-        mockDb.get.mockResolvedValue(grid);
+    it("deletes a mockup together with its image", async () => {
+      const [id] = await database.addMockups(mockupInput("a.png"));
 
-        const result = await database.getGrid("test-id");
+      await database.deleteMockup(id);
 
-        expect(result).toEqual(grid);
-      });
-
-      it("returns undefined when grid not found", async () => {
-        mockDb.get.mockResolvedValue(undefined);
-
-        const result = await database.getGrid("non-existent");
-
-        expect(result).toBeUndefined();
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.get.mockRejectedValue(new Error("DB error"));
-
-        await expect(database.getGrid("test-id")).rejects.toThrow("Failed to get grid");
-      });
+      expect(await database.getAllMockups()).toEqual([]);
+      expect(await database.getMockupImage(id)).toBeUndefined();
     });
 
-    describe("addGrid", () => {
-      it("adds grid and returns id", async () => {
-        mockDb.put.mockResolvedValue(undefined);
+    it("clears all mockups", async () => {
+      await database.addMockups([mockupInput("a.png"), mockupInput("b.png")]);
 
-        // Mock crypto.randomUUID
-        const mockUUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890" as const;
-        vi.spyOn(crypto, "randomUUID").mockReturnValue(mockUUID);
+      await database.resetMockups();
 
-        const input: GridInput = {
-          width: "1200px",
-          columns: 12,
-          gutterWidth: "24px",
-          isGutterOnOutside: true,
-          position: "center"
-        };
-
-        const result = await database.addGrid(input);
-
-        expect(result).toBe(mockUUID);
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.put.mockRejectedValue(new Error("DB error"));
-
-        const input: GridInput = {
-          width: "1200px",
-          columns: 12,
-          gutterWidth: "24px",
-          isGutterOnOutside: true,
-          position: "center"
-        };
-
-        await expect(database.addGrid(input)).rejects.toThrow("Failed to add grid");
-      });
-    });
-
-    describe("deleteGrid", () => {
-      it("deletes grid by id", async () => {
-        mockDb.delete.mockResolvedValue(undefined);
-
-        await expect(database.deleteGrid("test-id")).resolves.toBeUndefined();
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.delete.mockRejectedValue(new Error("DB error"));
-
-        await expect(database.deleteGrid("test-id")).rejects.toThrow("Failed to delete grid");
-      });
-    });
-
-    describe("resetGrids", () => {
-      it("clears all grids", async () => {
-        mockDb.clear.mockResolvedValue(undefined);
-
-        await expect(database.resetGrids()).resolves.toBeUndefined();
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.clear.mockRejectedValue(new Error("DB error"));
-
-        await expect(database.resetGrids()).rejects.toThrow("Failed to reset grids");
-      });
+      expect(await database.getAllMockups()).toEqual([]);
     });
   });
 
-  describe("settings operations", () => {
-    describe("getSettingsByGroup", () => {
-      it("returns empty object when no settings", async () => {
-        mockDb.get.mockResolvedValue(undefined);
+  describe("settings", () => {
+    it("saves and loads a whole group", async () => {
+      expect(await database.getSettings("dock")).toBeUndefined();
 
-        const result = await database.getSettingsByGroup("dock");
+      await database.saveSettings("dock", { position: "top", theme: "dark" });
 
-        expect(result).toEqual({});
-      });
-
-      it("returns settings for group", async () => {
-        const settings = { position: "top", theme: "dark" };
-        mockDb.get.mockResolvedValue(settings);
-
-        const result = await database.getSettingsByGroup("dock");
-
-        expect(result).toEqual(settings);
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.get.mockRejectedValue(new Error("DB error"));
-
-        await expect(database.getSettingsByGroup("dock")).rejects.toThrow("Failed to load settings");
-      });
-    });
-
-    describe("updateSetting", () => {
-      it("updates single setting", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue({ theme: "light" }),
-          put: vi.fn().mockResolvedValue(undefined)
-        };
-        mockDb.transaction.mockReturnValue({
-          objectStore: () => mockTxStore,
-          done: Promise.resolve()
-        });
-
-        await database.updateSetting("dock", "position", "top");
-
-        expect(mockTxStore.put).toHaveBeenCalled();
-      });
-
-      it("emits event on settings update", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue({}),
-          put: vi.fn().mockResolvedValue(undefined)
-        };
-        mockDb.transaction.mockReturnValue({
-          objectStore: () => mockTxStore,
-          done: Promise.resolve()
-        });
-
-        await database.updateSetting("dock", "theme", "dark");
-
-        expect(settingsEventBus.emit).toHaveBeenCalledWith("dock", { theme: "dark" });
-      });
-
-      it("merges with existing settings", async () => {
-        const existingSettings = { position: "bottom", theme: "light" };
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue(existingSettings),
-          put: vi.fn().mockResolvedValue(undefined)
-        };
-        mockDb.transaction.mockReturnValue({
-          objectStore: () => mockTxStore,
-          done: Promise.resolve()
-        });
-
-        await database.updateSetting("dock", "theme", "dark");
-
-        expect(mockTxStore.put).toHaveBeenCalledWith({ position: "bottom", theme: "dark" }, "dock");
-      });
-
-      it("creates settings object when none exist", async () => {
-        const mockTxStore = {
-          get: vi.fn().mockResolvedValue(undefined),
-          put: vi.fn().mockResolvedValue(undefined)
-        };
-        mockDb.transaction.mockReturnValue({
-          objectStore: () => mockTxStore,
-          done: Promise.resolve()
-        });
-
-        await database.updateSetting("dock", "theme", "dark");
-
-        expect(mockTxStore.put).toHaveBeenCalledWith({ theme: "dark" }, "dock");
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.transaction.mockImplementation(() => {
-          throw new Error("Transaction failed");
-        });
-
-        await expect(database.updateSetting("dock", "theme", "dark")).rejects.toThrow("Failed to update setting");
-      });
-    });
-
-    describe("resetGridOverlaySettings", () => {
-      it("deletes grid overlay settings", async () => {
-        mockDb.delete.mockResolvedValue(undefined);
-
-        await expect(database.resetGridOverlaySettings()).resolves.toBeUndefined();
-        expect(mockDb.delete).toHaveBeenCalledWith("settings", "gridOverlay");
-      });
-
-      it("throws DatabaseError on failure", async () => {
-        mockDb.delete.mockRejectedValue(new Error("DB error"));
-
-        await expect(database.resetGridOverlaySettings()).rejects.toThrow("Failed to reset grid overlay settings");
-      });
+      expect(await database.getSettings("dock")).toEqual({ position: "top", theme: "dark" });
     });
   });
 
-  describe("opening the database", () => {
-    it("retries after a failed open instead of caching the failure", async () => {
-      const { openDB } = await import("idb");
-      vi.mocked(openDB).mockRejectedValueOnce(new Error("blocked"));
+  describe("ids", () => {
+    it("generates UUID v4 ids without crypto.randomUUID (insecure contexts such as LAN IPs)", async () => {
+      const randomUUID = crypto.randomUUID;
+      Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+      try {
+        const id = await database.addGrid(gridInput());
+        expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      } finally {
+        Object.defineProperty(crypto, "randomUUID", { value: randomUUID, configurable: true });
+      }
+    });
+  });
 
-      await expect(database.getAllMockups()).rejects.toThrow("Failed to load mockups");
-      await expect(database.getAllMockups()).resolves.toEqual([]);
+  describe("connection", () => {
+    it("retries opening after a failure instead of caching it", async () => {
+      const open = vi.spyOn(indexedDB, "open").mockImplementationOnce(() => {
+        throw new Error("blocked");
+      });
+
+      await expect(database.getAllGrids()).rejects.toThrow("Failed to load grids");
+      await expect(database.getAllGrids()).resolves.toEqual([]);
+      open.mockRestore();
+    });
+
+    it("steps aside when another tab upgrades the database, then reconnects", async () => {
+      await database.addGrid(gridInput());
+
+      // Another tab with a newer schema: the upgrade must not be blocked by our open connection
+      const other = await openDB(DB_NAME, 4, { blocked: () => expect.fail("upgrade was blocked") });
+      other.close();
+    });
+  });
+
+  describe("migration from version 2", () => {
+    it("converts stored ArrayBuffers to Blobs and keeps everything else", async () => {
+      const v2 = await openDB(DB_NAME, 2, {
+        upgrade(db) {
+          db.createObjectStore("mockups", { keyPath: "id" });
+          db.createObjectStore("mockup_blobs");
+          db.createObjectStore("grids", { keyPath: "id" });
+          db.createObjectStore("settings");
+        }
+      });
+      const bytes = (text: string) => new TextEncoder().encode(text).buffer;
+      await v2.put("mockups", {
+        id: "m1",
+        filename: "home.jpg",
+        mimeType: "image/jpeg",
+        createdAt: 1,
+        thumbnailBuffer: bytes("thumb")
+      });
+      await v2.put("mockup_blobs", bytes("original"), "m1");
+      await v2.put("grids", { ...gridInput(), id: "g1", createdAt: 1 });
+      await v2.put("settings", { position: "top", theme: "dark" }, "dock");
+      v2.close();
+
+      const [mockup] = await database.getAllMockups();
+      expect(mockup).toMatchObject({ id: "m1", filename: "home.jpg", mimeType: "image/jpeg" });
+      expect(mockup).not.toHaveProperty("thumbnailBuffer");
+      expect(mockup.thumbnail).toBeInstanceOf(Blob);
+      expect(mockup.thumbnail.type).toBe("image/jpeg");
+      expect(await mockup.thumbnail.text()).toBe("thumb");
+
+      const image = await database.getMockupImage("m1");
+      expect(image).toBeInstanceOf(Blob);
+      expect(image!.type).toBe("image/jpeg");
+      expect(await image!.text()).toBe("original");
+
+      expect(await database.getGrid("g1")).toMatchObject({ id: "g1" });
+      expect(await database.getSettings("dock")).toEqual({ position: "top", theme: "dark" });
+    });
+
+    it("creates all stores for a brand new database", async () => {
+      expect(await database.getAllMockups()).toEqual([]);
+      expect(await database.getAllGrids()).toEqual([]);
+      expect(await database.getSettings("dock")).toBeUndefined();
     });
   });
 });

@@ -1,7 +1,4 @@
 <script lang="ts">
-  // Svelte
-  import { onMount } from "svelte";
-
   // Icons
   import IconDelete from "~/assets/delete-02-stroke-rounded.svg?component";
   import IconToggle from "~/assets/toggle-on-stroke-rounded.svg?component";
@@ -11,10 +8,6 @@
   import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
   // Utils
   import { withDefaultUnit } from "~/utils/validation";
-
-  onMount(() => {
-    gridManagerStore.init();
-  });
 
   // Editable drafts: each resets only when its own store value changes (e.g., after save or reset),
   // so saving one field doesn't discard unsaved edits in the others

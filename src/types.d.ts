@@ -27,13 +27,17 @@ interface Size {
 // Entity Types
 // ============================================
 
+/** A mockup in the library; the full-size image is stored separately (see getMockupImage) */
 interface Mockup {
   id: string;
-  originalBuffer: ArrayBuffer;
-  thumbnailBuffer: ArrayBuffer;
   filename: string;
   mimeType: string;
   createdAt: number;
+  thumbnail: Blob;
+  /** Natural size and file size; unknown for mockups uploaded before database version 3 */
+  width?: number;
+  height?: number;
+  fileSize?: number;
 }
 
 interface LayoutGridConfig {
@@ -57,7 +61,6 @@ interface DockSettings {
 
 interface MockupOverlaySettings {
   activeMockupId: string | null;
-  size: Size;
   isHidden: boolean;
   isLocked: boolean;
   opacity: number;
@@ -88,5 +91,5 @@ type SettingGroup = keyof AppSettings;
 // Input Types (for creating new entities)
 // ============================================
 
-type MockupInput = Omit<Mockup, "id" | "createdAt">;
+type MockupInput = Omit<Mockup, "id" | "createdAt"> & { image: Blob };
 type GridInput = Omit<LayoutGridConfig, "id" | "createdAt">;

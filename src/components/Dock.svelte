@@ -1,7 +1,4 @@
 <script lang="ts">
-  // Svelte
-  import { onMount } from "svelte";
-
   // Utils
   import { isLastInputTouch, isTouchDevice } from "~/utils/device";
   // Icons
@@ -183,10 +180,6 @@
       clearTimeout(listenerTimer);
       window.removeEventListener("click", handleClickOutside);
     };
-  });
-
-  onMount(() => {
-    dockStore.init();
   });
 </script>
 

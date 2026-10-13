@@ -10,8 +10,8 @@
  * overlay are automatically disabled via the keyboardStore integration.
  */
 
-// Database
-import { getSettingsByGroup, updateSetting } from "./database";
+// Platform
+import { createSettings } from "~/platform/settings.svelte";
 // Stores
 import { keyboardStore } from "./keyboardStore.svelte";
 import { toastStore } from "./toastStore.svelte";
@@ -24,10 +24,15 @@ const DOCK_SIZES: Record<DockMode, Size> = {
   grids: { width: 640, height: 580 }
 };
 
+const DEFAULT_DOCK_SETTINGS: DockSettings = { position: "bottom", theme: "light" };
+
 function createDockStore() {
+  const settings = createSettings("dock", DEFAULT_DOCK_SETTINGS, {
+    position: (value) => value === "top" || value === "bottom",
+    theme: (value) => value === "light" || value === "dark"
+  });
+
   let mode = $state<DockMode>("toolbar");
-  let position = $state<DockPosition>("bottom");
-  let theme = $state<Theme>("light");
   let managerVisible = $state(false);
   let toolbarVisible = $state(true);
 
@@ -42,10 +47,10 @@ function createDockStore() {
       return mode;
     },
     get position() {
-      return position;
+      return settings.current.position;
     },
     get theme() {
-      return theme;
+      return settings.current.theme;
     },
     get managerVisible() {
       return managerVisible;
@@ -71,9 +76,7 @@ function createDockStore() {
 
       initPromise = (async () => {
         try {
-          const settings = await getSettingsByGroup("dock");
-          if (settings.position) position = settings.position;
-          if (settings.theme) theme = settings.theme;
+          await settings.load();
         } catch (e) {
           toastStore.showError(e, "Failed to load dock settings");
         } finally {
@@ -107,15 +110,11 @@ function createDockStore() {
     },
 
     togglePosition: () => {
-      const newPosition = position === "bottom" ? "top" : "bottom";
-      updateSetting("dock", "position", newPosition).catch(toastStore.showError);
-      position = newPosition;
+      settings.update({ position: settings.current.position === "bottom" ? "top" : "bottom" });
     },
 
     toggleTheme: () => {
-      const newTheme = theme === "light" ? "dark" : "light";
-      updateSetting("dock", "theme", newTheme).catch(toastStore.showError);
-      theme = newTheme;
+      settings.update({ theme: settings.current.theme === "light" ? "dark" : "light" });
     }
   };
 }

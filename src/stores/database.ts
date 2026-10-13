@@ -3,23 +3,26 @@
  *
  * IndexedDB operations for persisting mockups, grids, and settings.
  * Uses idb library for Promise-based API.
+ *
+ * Schema versions:
+ * - 1–2: mockups (metadata + thumbnail ArrayBuffer), mockup_blobs (original ArrayBuffer), grids, settings
+ * - 3:   images are stored as Blobs (no copies into ArrayBuffers), mockup metadata has a `thumbnail` Blob
  */
 
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from "idb";
 import { DatabaseError } from "~/utils/errors";
-import { settingsEventBus } from "./eventBus";
 
 const DB_NAME = "PixelMirrorDB";
-const VERSION = 2;
+const VERSION = 3;
 
 interface PixelMirrorDBSchema extends DBSchema {
   mockups: {
     key: Mockup["id"];
-    value: Omit<Mockup, "originalBuffer">;
+    value: Mockup;
   };
   mockup_blobs: {
     key: Mockup["id"];
-    value: ArrayBuffer;
+    value: Blob;
   };
   grids: {
     key: LayoutGridConfig["id"];
@@ -29,6 +32,13 @@ interface PixelMirrorDBSchema extends DBSchema {
     key: SettingGroup;
     value: AppSettings[SettingGroup];
   };
+}
+
+type UpgradeTransaction = IDBPTransaction<PixelMirrorDBSchema, StoreNames<PixelMirrorDBSchema>[], "versionchange">;
+
+/** Mockup metadata as stored up to version 2 */
+interface MockupRecordV2 extends Omit<Mockup, "thumbnail"> {
+  thumbnailBuffer: ArrayBuffer;
 }
 
 /**
@@ -48,24 +58,55 @@ function generateId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+async function migrateImagesToBlobs(tx: UpgradeTransaction) {
+  const mimeTypes = new Map<string, string>();
+
+  let metadataCursor = await tx.objectStore("mockups").openCursor();
+  while (metadataCursor) {
+    const { thumbnailBuffer, ...record } = metadataCursor.value as unknown as MockupRecordV2;
+    mimeTypes.set(record.id, record.mimeType);
+    if (thumbnailBuffer) {
+      await metadataCursor.update({ ...record, thumbnail: new Blob([thumbnailBuffer], { type: record.mimeType }) });
+    }
+    metadataCursor = await metadataCursor.continue();
+  }
+
+  let imageCursor = await tx.objectStore("mockup_blobs").openCursor();
+  while (imageCursor) {
+    const value: unknown = imageCursor.value;
+    if (value instanceof ArrayBuffer) {
+      await imageCursor.update(new Blob([value], { type: mimeTypes.get(imageCursor.key) ?? "" }));
+    }
+    imageCursor = await imageCursor.continue();
+  }
+}
+
 let dbPromise: Promise<IDBPDatabase<PixelMirrorDBSchema>> | undefined;
 
 async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
   if (!dbPromise) {
     dbPromise = openDB<PixelMirrorDBSchema>(DB_NAME, VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains("mockups")) {
-          db.createObjectStore("mockups", { keyPath: "id" });
+      async upgrade(db, oldVersion, _newVersion, tx) {
+        if (oldVersion < 2) {
+          // Version 1 databases may lack some stores; create whatever is missing
+          if (!db.objectStoreNames.contains("mockups")) db.createObjectStore("mockups", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("mockup_blobs")) db.createObjectStore("mockup_blobs");
+          if (!db.objectStoreNames.contains("grids")) db.createObjectStore("grids", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings");
         }
-        if (!db.objectStoreNames.contains("mockup_blobs")) {
-          db.createObjectStore("mockup_blobs");
+        if (oldVersion < 3) {
+          await migrateImagesToBlobs(tx);
         }
-        if (!db.objectStoreNames.contains("grids")) {
-          db.createObjectStore("grids", { keyPath: "id" });
-        }
-        if (!db.objectStoreNames.contains("settings")) {
-          db.createObjectStore("settings");
-        }
+      },
+      // Another tab (e.g. with a newer version of the tool) wants to upgrade: let it,
+      // and reopen on the next call
+      blocking(_currentVersion, _blockedVersion, event) {
+        (event.target as IDBDatabase).close();
+        dbPromise = undefined;
+      },
+      // The browser closed the connection (e.g. storage cleared)
+      terminated() {
+        dbPromise = undefined;
       }
     }).catch((error) => {
       // Don't cache the failure: the next call retries opening the database
@@ -80,7 +121,7 @@ async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
 // Mockup Operations
 // ============================================
 
-export async function getAllMockups(): Promise<Omit<Mockup, "originalBuffer">[]> {
+export async function getAllMockups(): Promise<Mockup[]> {
   try {
     const db = await getDB();
     const mockups = await db.getAll("mockups");
@@ -90,18 +131,11 @@ export async function getAllMockups(): Promise<Omit<Mockup, "originalBuffer">[]>
   }
 }
 
-export async function getMockup(id: string): Promise<Mockup | undefined> {
+/** The full-size image of a mockup */
+export async function getMockupImage(id: string): Promise<Blob | undefined> {
   try {
     const db = await getDB();
-    const tx = db.transaction(["mockups", "mockup_blobs"], "readonly");
-    const [metadata, originalBuffer] = await Promise.all([
-      tx.objectStore("mockups").get(id),
-      tx.objectStore("mockup_blobs").get(id)
-    ]);
-    await tx.done;
-
-    if (!metadata || !originalBuffer) return undefined;
-    return { ...metadata, originalBuffer };
+    return await db.get("mockup_blobs", id);
   } catch (error) {
     throw new DatabaseError("Failed to get mockup", error);
   }
@@ -113,16 +147,15 @@ export async function addMockups(input: MockupInput | MockupInput[]): Promise<st
     const db = await getDB();
     const tx = db.transaction(["mockups", "mockup_blobs"], "readwrite");
     const metadataStore = tx.objectStore("mockups");
-    const blobStore = tx.objectStore("mockup_blobs");
+    const imageStore = tx.objectStore("mockup_blobs");
 
     const now = Date.now();
     const ids: string[] = [];
     const putPromises = inputs.map((item, index) => {
       const id = generateId();
       ids.push(id);
-      const { originalBuffer, ...rest } = item;
-      const metadata = { ...rest, id, createdAt: now + index };
-      return Promise.all([metadataStore.put(metadata), blobStore.put(originalBuffer, id)]);
+      const { image, ...metadata } = item;
+      return Promise.all([metadataStore.put({ ...metadata, id, createdAt: now + index }), imageStore.put(image, id)]);
     });
 
     await Promise.all(putPromises);
@@ -215,43 +248,22 @@ export async function resetGrids(): Promise<void> {
 // Settings Operations
 // ============================================
 
-export async function getSettingsByGroup<G extends SettingGroup>(group: G): Promise<Partial<AppSettings[G]>> {
+/** The stored settings of a group, unvalidated (they may come from an older version) */
+export async function getSettings(group: SettingGroup): Promise<unknown> {
   try {
     const db = await getDB();
-    const settings = (await db.get("settings", group)) as AppSettings[G] | undefined;
-    return settings || {};
+    return await db.get("settings", group);
   } catch (error) {
     throw new DatabaseError("Failed to load settings", error);
   }
 }
 
-export async function updateSetting<G extends SettingGroup, K extends keyof AppSettings[G]>(
-  group: G,
-  key: K,
-  value: AppSettings[G][K]
-): Promise<void> {
+/** Replace the stored settings of a group */
+export async function saveSettings<G extends SettingGroup>(group: G, settings: AppSettings[G]): Promise<void> {
   try {
     const db = await getDB();
-    const tx = db.transaction("settings", "readwrite");
-    const store = tx.objectStore("settings");
-
-    const existingSettings = ((await store.get(group)) || {}) as AppSettings[G];
-    await store.put({ ...existingSettings, [key]: value }, group);
-    await tx.done;
-
-    // Emit event for store synchronization
-    const partialSettings = { [key]: value } as unknown as Partial<AppSettings[G]>;
-    settingsEventBus.emit(group, partialSettings);
+    await db.put("settings", settings, group);
   } catch (error) {
-    throw new DatabaseError("Failed to update setting", error);
-  }
-}
-
-export async function resetGridOverlaySettings(): Promise<void> {
-  try {
-    const db = await getDB();
-    await db.delete("settings", "gridOverlay");
-  } catch (error) {
-    throw new DatabaseError("Failed to reset grid overlay settings", error);
+    throw new DatabaseError("Failed to save settings", error);
   }
 }

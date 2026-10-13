@@ -4,7 +4,7 @@
  * Handles image file processing for mockups:
  * - Validates file type and size
  * - Generates square thumbnails for preview
- * - Extracts original buffer for overlay display
+ * - Records the image size
  */
 
 import { MOCKUP_THUMBNAIL_SIZE } from "~/constants";
@@ -12,58 +12,62 @@ import { FileError } from "./errors";
 import { validateFiles } from "./validation";
 
 async function processFile(file: File): Promise<MockupInput> {
-  const originalBuffer = await file.arrayBuffer();
+  const { thumbnail, width, height } = await new Promise<{ thumbnail: Blob; width: number; height: number }>(
+    (resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
 
-  const thumbnailBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        // Create square crop from center
+        const size = Math.min(img.width, img.height);
+        const sx = (img.width - size) / 2;
+        const sy = (img.height - size) / 2;
 
-    img.onload = () => {
-      // Create square crop from center
-      const size = Math.min(img.width, img.height);
-      const sx = (img.width - size) / 2;
-      const sy = (img.height - size) / 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = MOCKUP_THUMBNAIL_SIZE;
+        canvas.height = MOCKUP_THUMBNAIL_SIZE;
 
-      const canvas = document.createElement("canvas");
-      canvas.width = MOCKUP_THUMBNAIL_SIZE;
-      canvas.height = MOCKUP_THUMBNAIL_SIZE;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        URL.revokeObjectURL(objectUrl);
-        reject(new FileError("Failed to get canvas context"));
-        return;
-      }
-
-      ctx.drawImage(img, sx, sy, size, size, 0, 0, MOCKUP_THUMBNAIL_SIZE, MOCKUP_THUMBNAIL_SIZE);
-
-      canvas.toBlob(
-        async (blob) => {
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
           URL.revokeObjectURL(objectUrl);
-          if (blob) {
-            resolve(await blob.arrayBuffer());
-          } else {
-            reject(new FileError("Failed to create thumbnail"));
-          }
-        },
-        file.type,
-        0.8
-      );
-    };
+          reject(new FileError("Failed to get canvas context"));
+          return;
+        }
 
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new FileError(`Failed to load image: ${file.name}`));
-    };
+        ctx.drawImage(img, sx, sy, size, size, 0, 0, MOCKUP_THUMBNAIL_SIZE, MOCKUP_THUMBNAIL_SIZE);
 
-    img.src = objectUrl;
-  });
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(objectUrl);
+            if (blob) {
+              resolve({ thumbnail: blob, width: img.naturalWidth, height: img.naturalHeight });
+            } else {
+              reject(new FileError("Failed to create thumbnail"));
+            }
+          },
+          file.type,
+          0.8
+        );
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new FileError(`Failed to load image: ${file.name}`));
+      };
+
+      img.src = objectUrl;
+    }
+  );
 
   return {
-    originalBuffer,
-    thumbnailBuffer,
+    // The File is stored as is: it already is a Blob, so nothing is copied
+    image: file,
+    thumbnail,
     filename: file.name,
-    mimeType: file.type
+    mimeType: file.type,
+    width,
+    height,
+    fileSize: file.size
   };
 }
 

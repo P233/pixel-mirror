@@ -54,9 +54,10 @@ import {
   type View
 } from "~/features/overlay/model";
 // Platform
+import { createSettings, type SettingsSchema } from "~/platform/settings.svelte";
 import { readViewportCenter, toPagePoint } from "~/platform/viewport";
 // Database
-import { getMockup, getSettingsByGroup, updateSetting } from "./database";
+import { getMockupImage } from "./database";
 // Stores
 import { toastStore } from "./toastStore.svelte";
 // Utils
@@ -64,19 +65,45 @@ import { clamp, roundTo } from "./utils";
 
 export type MockupOverlayMode = OverlayMode;
 
+const DEFAULT_OVERLAY_SETTINGS: MockupOverlaySettings = {
+  activeMockupId: null,
+  isHidden: false,
+  isLocked: false,
+  opacity: OPACITY_DEFAULT,
+  position: { x: 0, y: 0 },
+  alignmentX: getAlignmentX(DEFAULT_PLACEMENT),
+  alignmentY: getAlignmentY(DEFAULT_PLACEMENT),
+  scale: 1
+};
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+const OVERLAY_SETTINGS_SCHEMA: SettingsSchema<MockupOverlaySettings> = {
+  activeMockupId: (value) => value === null || typeof value === "string",
+  isHidden: (value) => typeof value === "boolean",
+  isLocked: (value) => typeof value === "boolean",
+  opacity: (value) => isFiniteNumber(value) && value >= OPACITY_MIN && value <= OPACITY_MAX,
+  position: (value) => isFiniteNumber((value as Position)?.x) && isFiniteNumber((value as Position)?.y),
+  alignmentX: (value) => value === null || value === "left" || value === "center" || value === "right",
+  alignmentY: (value) => value === null || value === "top" || value === "bottom",
+  scale: (value) => (SCALE_OPTIONS as readonly unknown[]).includes(value)
+};
+
 function createMockupOverlayStore() {
   // Persisted state
-  let activeId = $state<string | null>(null);
-  let isHidden = $state(false);
-  let isLocked = $state(false);
-  let opacity = $state(OPACITY_DEFAULT);
-  let placement = $state<Placement>(DEFAULT_PLACEMENT);
-  let scale = $state(1);
+  const settings = createSettings("mockupOverlay", DEFAULT_OVERLAY_SETTINGS, OVERLAY_SETTINGS_SCHEMA);
+  const isHidden = $derived(settings.current.isHidden);
+  const isLocked = $derived(settings.current.isLocked);
+  const opacity = $derived(settings.current.opacity);
+  const scale = $derived(settings.current.scale);
+  const placement = $derived(
+    placementFromSettings(settings.current.alignmentX, settings.current.alignmentY, settings.current.position)
+  );
 
   // Runtime state
   let interaction = $state<Interaction>(IDLE);
   let activeMockupUrl = $state<string | null>(null);
-  let activeMockupMetadata = $state<Mockup | undefined>(undefined);
+  let loadedMockupId: string | null = null;
   let mockupSize = $state<Size>({ width: 0, height: 0 });
   let pageSize = $state<Size>({ width: 0, height: 0 });
 
@@ -107,80 +134,81 @@ function createMockupOverlayStore() {
   // Internal helpers
   // ============================================
 
+  function clearLoadedMockup() {
+    if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
+    activeMockupUrl = null;
+    loadedMockupId = null;
+    mockupSize = { width: 0, height: 0 };
+  }
+
   async function loadMockup(id: string | null) {
     const token = ++loadToken;
 
     if (!id) {
-      if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
-      activeMockupUrl = null;
-      activeMockupMetadata = undefined;
-      mockupSize = { width: 0, height: 0 };
+      clearLoadedMockup();
       return;
     }
 
-    if (activeMockupMetadata?.id === id && activeMockupUrl) return;
+    if (loadedMockupId === id && activeMockupUrl) return;
 
     try {
-      const mockup = await getMockup(id);
+      const image = await getMockupImage(id);
       if (token !== loadToken) return;
 
-      if (mockup) {
-        if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
-        const blob = new Blob([mockup.originalBuffer], { type: mockup.mimeType });
-        const newUrl = URL.createObjectURL(blob);
-        activeMockupUrl = newUrl;
-        activeMockupMetadata = mockup;
-
-        const img = new Image();
-        img.onload = () => {
-          if (token !== loadToken) return;
-          // The aligned position is derived from this size
-          mockupSize = { width: img.naturalWidth, height: img.naturalHeight };
-        };
-        img.onerror = () => {
-          if (token !== loadToken) return;
-          toastStore.showError(new Error(`Failed to load mockup image.`));
-          mockupSize = { width: 0, height: 0 };
-        };
-        img.src = newUrl;
-      } else {
+      if (!image) {
         toastStore.showError(new Error(`Mockup not found.`));
-        activeMockupUrl = null;
-        activeMockupMetadata = undefined;
-        mockupSize = { width: 0, height: 0 };
+        clearLoadedMockup();
+        return;
       }
+
+      if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
+      const newUrl = URL.createObjectURL(image);
+      activeMockupUrl = newUrl;
+      loadedMockupId = id;
+
+      const img = new Image();
+      img.onload = () => {
+        if (token !== loadToken) return;
+        // The aligned position is derived from this size
+        mockupSize = { width: img.naturalWidth, height: img.naturalHeight };
+      };
+      img.onerror = () => {
+        if (token !== loadToken) return;
+        toastStore.showError(new Error(`Failed to load mockup image.`));
+        mockupSize = { width: 0, height: 0 };
+      };
+      img.src = newUrl;
     } catch (e) {
       if (token !== loadToken) return;
       toastStore.showError(e, "Failed to load mockup");
-      activeMockupUrl = null;
-      activeMockupMetadata = undefined;
-      mockupSize = { width: 0, height: 0 };
+      clearLoadedMockup();
     }
   }
 
-  function persist<K extends keyof MockupOverlaySettings>(key: K, value: MockupOverlaySettings[K]) {
-    updateSetting("mockupOverlay", key, value).catch(toastStore.showError);
-  }
-
-  function persistAlignment() {
-    persist("alignmentX", getAlignmentX(placement));
-    persist("alignmentY", getAlignmentY(placement));
+  function setPlacement(next: Placement) {
+    settings.update({
+      alignmentX: getAlignmentX(next),
+      alignmentY: getAlignmentY(next),
+      // An aligned axis keeps its current coordinate here, to fall back on if its alignment is cleared
+      position: {
+        x: "offset" in next.x ? next.x.offset : placedPosition.x,
+        y: "offset" in next.y ? next.y.offset : placedPosition.y
+      }
+    });
   }
 
   /** Pin the mockup at a position, dropping any alignment */
   function placeAt(newPosition: Position) {
-    const wasAligned = getIsAligned(placement);
-    placement = freePlacement(newPosition);
-    if (wasAligned) persistAlignment();
+    setPlacement(freePlacement(newPosition));
   }
 
   function setAlignmentAxes(x: MockupAlignmentX | undefined, y: MockupAlignmentY | undefined) {
     // An axis that loses its alignment stays where it currently is
     const current = placedPosition;
-    placement = {
+    setPlacement({
       x: x === undefined ? placement.x : x === null ? { offset: current.x } : { align: x },
       y: y === undefined ? placement.y : y === null ? { offset: current.y } : { align: y }
-    };
+    });
   }
 
   /** The transform currently on screen, as the starting point for a gesture */
@@ -208,7 +236,6 @@ function createMockupOverlayStore() {
     const finalPosition = interaction.current;
     interaction = IDLE;
     placeAt(finalPosition);
-    persist("position", { ...finalPosition });
   }
 
   /** Scale around the pinch center captured at the start of the pinch */
@@ -228,7 +255,7 @@ function createMockupOverlayStore() {
       return initialized;
     },
     get activeMockupId() {
-      return activeId;
+      return settings.current.activeMockupId;
     },
     get activeMockupUrl() {
       return activeMockupUrl;
@@ -291,16 +318,8 @@ function createMockupOverlayStore() {
 
       initPromise = (async () => {
         try {
-          const settings = await getSettingsByGroup("mockupOverlay");
-
-          if (settings.activeMockupId !== undefined) activeId = settings.activeMockupId;
-          if (settings.isHidden !== undefined) isHidden = settings.isHidden;
-          if (settings.isLocked !== undefined) isLocked = settings.isLocked;
-          if (settings.opacity !== undefined) opacity = settings.opacity;
-          if (settings.scale !== undefined) scale = settings.scale;
-          placementFromStored(settings);
-
-          await loadMockup(activeId);
+          await settings.load();
+          await loadMockup(settings.current.activeMockupId);
         } catch (e) {
           toastStore.showError(e, "Failed to load mockup overlay settings");
         } finally {
@@ -322,21 +341,9 @@ function createMockupOverlayStore() {
     // ============================================
 
     setActiveMockup: (id: string | null) => {
-      activeId = id;
+      // A newly selected mockup is shown and movable
+      settings.update(id ? { activeMockupId: id, isHidden: false, isLocked: false } : { activeMockupId: null });
       loadMockup(id);
-
-      persist("activeMockupId", id);
-
-      if (id) {
-        if (isHidden) {
-          isHidden = false;
-          persist("isHidden", false);
-        }
-        if (isLocked) {
-          isLocked = false;
-          persist("isLocked", false);
-        }
-      }
     },
 
     // ============================================
@@ -349,15 +356,13 @@ function createMockupOverlayStore() {
       // Can toggle visibility from any mode, but will exit solid/zoomed first
       exitInspection();
 
-      isHidden = !isHidden;
-      persist("isHidden", isHidden);
+      settings.update({ isHidden: !isHidden });
     },
 
     toggleLock: () => {
       if (!can.adjustAppearance(mode)) return;
 
-      isLocked = !isLocked;
-      persist("isLocked", isLocked);
+      settings.update({ isLocked: !isLocked });
     },
 
     // ============================================
@@ -368,15 +373,13 @@ function createMockupOverlayStore() {
       if (!can.adjustAppearance(mode)) return;
 
       const delta = direction > 0 ? -OPACITY_STEP : OPACITY_STEP;
-      opacity = clamp(roundTo(opacity + delta, 2), OPACITY_MIN, OPACITY_MAX);
-      persist("opacity", opacity);
+      settings.update({ opacity: clamp(roundTo(opacity + delta, 2), OPACITY_MIN, OPACITY_MAX) });
     },
 
     resetOpacity: () => {
       if (!can.adjustAppearance(mode)) return;
 
-      opacity = OPACITY_DEFAULT;
-      persist("opacity", opacity);
+      settings.update({ opacity: OPACITY_DEFAULT });
     },
 
     /**
@@ -385,8 +388,7 @@ function createMockupOverlayStore() {
     setOpacity: (value: number) => {
       if (!can.adjustAppearance(mode)) return;
 
-      opacity = clamp(roundTo(value, 2), OPACITY_MIN, OPACITY_MAX);
-      persist("opacity", opacity);
+      settings.update({ opacity: clamp(roundTo(value, 2), OPACITY_MIN, OPACITY_MAX) });
     },
 
     // ============================================
@@ -403,10 +405,8 @@ function createMockupOverlayStore() {
       const center = readViewportCenter();
       const newPosition = focusPoint(placedPosition, scale, newScale, center);
 
-      scale = newScale;
+      settings.update({ scale: newScale });
       placeAt(newPosition);
-      persist("scale", scale);
-      persist("position", { ...newPosition });
     },
 
     // ============================================
@@ -417,21 +417,18 @@ function createMockupOverlayStore() {
       if (!can.reposition(mode)) return;
 
       setAlignmentAxes(value, undefined);
-      persist("alignmentX", value);
     },
 
     setAlignmentY: (value: MockupAlignmentY) => {
       if (!can.reposition(mode)) return;
 
       setAlignmentAxes(undefined, value);
-      persist("alignmentY", value);
     },
 
     setAlignment: (y: MockupAlignmentY, x: MockupAlignmentX) => {
       if (!can.reposition(mode)) return;
 
       setAlignmentAxes(x, y);
-      persistAlignment();
     },
 
     clearAlignment: () => {
@@ -447,10 +444,6 @@ function createMockupOverlayStore() {
       if (!can.reposition(mode)) return;
 
       placeAt({ x: placedPosition.x + dx, y: placedPosition.y + dy });
-    },
-
-    persistPosition: () => {
-      persist("position", { ...placedPosition });
     },
 
     // ============================================
@@ -575,15 +568,6 @@ function createMockupOverlayStore() {
       };
     }
   };
-
-  function placementFromStored(settings: Partial<MockupOverlaySettings>) {
-    const storedPosition = settings.position ?? { x: 0, y: 0 };
-    placement = placementFromSettings(
-      settings.alignmentX === undefined ? getAlignmentX(DEFAULT_PLACEMENT) : settings.alignmentX,
-      settings.alignmentY === undefined ? getAlignmentY(DEFAULT_PLACEMENT) : settings.alignmentY,
-      storedPosition
-    );
-  }
 }
 
 export const mockupOverlayStore = createMockupOverlayStore();

@@ -4,32 +4,11 @@
 
 import { cleanup, fireEvent, render } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { settingsEventBus } from "~/stores/eventBus";
 
-vi.mock("~/stores/database", () => ({
-  getSettingsByGroup: vi.fn().mockResolvedValue({}),
-  updateSetting: vi.fn(async (group: SettingGroup, key: string, value: unknown) => {
-    settingsEventBus.emit(group, { [key]: value });
-  }),
-  getAllGrids: vi.fn().mockResolvedValue([
-    {
-      id: "g1",
-      width: "1140px",
-      columns: 12,
-      gutterWidth: "24px",
-      isGutterOnOutside: true,
-      position: "center",
-      createdAt: 1
-    }
-  ]),
-  getGrid: vi.fn().mockResolvedValue(undefined),
-  addGrid: vi.fn(),
-  deleteGrid: vi.fn(),
-  resetGrids: vi.fn(),
-  resetGridOverlaySettings: vi.fn()
-}));
+vi.mock("~/stores/database", () => import("~/stores/__fixtures__/memoryDatabase"));
 
 import GridManager from "./GridManager.svelte";
+import { flushSettings } from "~/platform/settings.svelte";
 import { gridManagerStore } from "~/stores/gridManagerStore.svelte";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -38,12 +17,16 @@ describe("GridManager with real stores", () => {
   let container: HTMLElement;
 
   beforeEach(async () => {
+    const db = (await import("~/stores/database")) as unknown as typeof import("~/stores/__fixtures__/memoryDatabase");
+    db.resetMemoryDatabase();
+    await gridManagerStore.init();
     ({ container } = render(GridManager));
     await flush();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    await flushSettings();
   });
 
   it("keeps unsaved edits in other fields when one field is saved", async () => {

@@ -401,14 +401,6 @@ describe("Dock component", () => {
     });
   });
 
-  describe("lifecycle", () => {
-    it("calls dockStore.init() on mount", () => {
-      render(Dock);
-
-      expect(mockDockStore.init).toHaveBeenCalledTimes(1);
-    });
-  });
-
   describe("manager modes", () => {
     it("renders .manager-wrapper when mode is mockups and managerVisible", () => {
       mockDockStore.mode = "mockups";

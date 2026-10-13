@@ -2,7 +2,9 @@
 <svelte:options customElement={{ shadow: "open" }} />
 
 <script lang="ts">
+  import { onMount } from "svelte";
   import { on } from "svelte/events";
+  import { startApp } from "~/bootstrap";
   import Dock from "~/components/Dock.svelte";
   import DropZone from "~/components/DropZone.svelte";
   import GridOverlay from "~/components/GridOverlay.svelte";
@@ -14,6 +16,8 @@
   import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
   import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
   import { isTouchDevice } from "~/utils/device";
+
+  onMount(startApp);
 
   // Global double-tap: anywhere on the page (dock included) toggles solid mode
   const doubleTap = createDoubleTapDetector();

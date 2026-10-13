@@ -30,11 +30,15 @@ vi.mock("~/stores/mockupManagerStore.svelte", () => ({
 
 vi.mock("~/utils/device", () => ({ isTouchDevice: vi.fn(() => false) }));
 
+const stopApp = vi.fn();
+vi.mock("~/bootstrap", () => ({ startApp: vi.fn(() => stopApp) }));
+
 import App from "./App.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
 import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
 import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
 import { isTouchDevice } from "~/utils/device";
+import { startApp } from "~/bootstrap";
 
 const dock = dockStore as { theme: Theme; isManagerMode: boolean };
 const overlay = mockupOverlayStore as {
@@ -72,6 +76,16 @@ afterEach(() => {
   cleanup();
   document.body.innerHTML = "";
   document.documentElement.style.touchAction = "";
+});
+
+describe("lifecycle", () => {
+  it("starts the app on mount and stops it on unmount", async () => {
+    const { unmount } = await renderApp();
+    expect(startApp).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(stopApp).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("theme", () => {

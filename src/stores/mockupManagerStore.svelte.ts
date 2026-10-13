@@ -14,7 +14,7 @@ import { mockupOverlayStore } from "./mockupOverlayStore.svelte";
 import { toastStore } from "./toastStore.svelte";
 
 function createMockupManagerStore() {
-  let mockups = $state<Omit<Mockup, "originalBuffer">[]>([]);
+  let mockups = $state<Mockup[]>([]);
 
   let initialized = $state(false);
   let initPromise: Promise<void> | null = null;

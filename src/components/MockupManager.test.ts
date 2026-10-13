@@ -20,7 +20,7 @@ vi.mock("~/stores/mockupManagerStore.svelte", () => ({
       id: string;
       filename: string;
       mimeType: string;
-      thumbnailBuffer: ArrayBuffer;
+      thumbnail: Blob;
     }>,
     activeMockupId: null as string | null,
     init: vi.fn(),
@@ -45,7 +45,7 @@ const mockManagerStore = mockupManagerStore as unknown as {
     id: string;
     filename: string;
     mimeType: string;
-    thumbnailBuffer: ArrayBuffer;
+    thumbnail: Blob;
   }>;
   activeMockupId: string | null;
   init: ReturnType<typeof vi.fn>;
@@ -119,9 +119,9 @@ describe("MockupManager component", () => {
   describe("mockup list", () => {
     it("renders correct number of mockup items", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) },
-        { id: "2", filename: "test2.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) },
-        { id: "3", filename: "test3.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) },
+        { id: "2", filename: "test2.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) },
+        { id: "3", filename: "test3.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       const { container } = render(MockupManager);
 
@@ -131,8 +131,8 @@ describe("MockupManager component", () => {
 
     it("applies .active class to active mockup", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) },
-        { id: "2", filename: "test2.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) },
+        { id: "2", filename: "test2.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       mockManagerStore.activeMockupId = "1";
       const { container } = render(MockupManager);
@@ -143,7 +143,7 @@ describe("MockupManager component", () => {
 
     it("renders indicator for active mockup", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       mockManagerStore.activeMockupId = "1";
       const { container } = render(MockupManager);
@@ -153,7 +153,7 @@ describe("MockupManager component", () => {
 
     it("does not render indicator for inactive mockup", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       mockManagerStore.activeMockupId = null;
       const { container } = render(MockupManager);
@@ -163,7 +163,7 @@ describe("MockupManager component", () => {
 
     it("disables preview button for active mockup", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       mockManagerStore.activeMockupId = "1";
       const { container } = render(MockupManager);
@@ -198,7 +198,7 @@ describe("MockupManager component", () => {
 
     it("Clear button is enabled when mockups exist", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       const { container } = render(MockupManager);
 
@@ -210,7 +210,7 @@ describe("MockupManager component", () => {
   describe("button clicks", () => {
     it("calls clear on Clear Mockups button click", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       const { container } = render(MockupManager);
 
@@ -231,7 +231,12 @@ describe("MockupManager component", () => {
 
     it("calls delete on delete button click", () => {
       mockManagerStore.mockups = [
-        { id: "test-id", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        {
+          id: "test-id",
+          filename: "test1.png",
+          mimeType: "image/png",
+          thumbnail: new Blob(["x"], { type: "image/png" })
+        }
       ];
       const { container } = render(MockupManager);
 
@@ -239,14 +244,6 @@ describe("MockupManager component", () => {
       deleteBtn.click();
 
       expect(mockManagerStore.delete).toHaveBeenCalledWith("test-id");
-    });
-  });
-
-  describe("lifecycle", () => {
-    it("calls mockupManagerStore.init() on mount", () => {
-      render(MockupManager);
-
-      expect(mockManagerStore.init).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -325,7 +322,7 @@ describe("MockupManager component", () => {
 
     it("calls enterToolbar when selecting a mockup", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       mockManagerStore.activeMockupId = null;
       const { container } = render(MockupManager);
@@ -338,7 +335,7 @@ describe("MockupManager component", () => {
 
     it("calls select after DOCK_TRANSITION_DURATION", async () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       mockManagerStore.activeMockupId = null;
       const { container } = render(MockupManager);
@@ -359,7 +356,7 @@ describe("MockupManager component", () => {
   describe("mockup display", () => {
     it("displays mockup filename as alt text", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "my-design.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "my-design.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       const { container } = render(MockupManager);
 
@@ -369,7 +366,7 @@ describe("MockupManager component", () => {
 
     it("sets draggable to false on images", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       const { container } = render(MockupManager);
 
@@ -379,8 +376,8 @@ describe("MockupManager component", () => {
 
     it("enables preview button for inactive mockup", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) },
-        { id: "2", filename: "test2.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) },
+        { id: "2", filename: "test2.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       mockManagerStore.activeMockupId = "1";
       const { container } = render(MockupManager);
@@ -393,7 +390,7 @@ describe("MockupManager component", () => {
   describe("delete button behavior", () => {
     it("stops event propagation on delete", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       const { container } = render(MockupManager);
 
@@ -408,7 +405,7 @@ describe("MockupManager component", () => {
 
     it("has title attribute for accessibility", () => {
       mockManagerStore.mockups = [
-        { id: "1", filename: "test.png", mimeType: "image/png", thumbnailBuffer: new ArrayBuffer(8) }
+        { id: "1", filename: "test.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
       const { container } = render(MockupManager);
 

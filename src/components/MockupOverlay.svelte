@@ -1,6 +1,6 @@
 <script lang="ts">
   // Svelte
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
 
   // Features
   import { overlayGestures } from "~/features/overlay/gestures";
@@ -10,25 +10,10 @@
 
   // Stores
   import { dockStore } from "~/stores/dockStore.svelte";
-  import { keyboardStore } from "~/stores/keyboardStore.svelte";
   import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
 
-  // Utils
-  import { initInputTypeTracking } from "~/utils/device";
-
-  let stopObservingPageSize: (() => void) | null = null;
-
-  onMount(() => {
-    initInputTypeTracking();
-    mockupOverlayStore.init();
-    keyboardStore.init();
-    stopObservingPageSize = observePageSize(mockupOverlayStore.setPageSize);
-  });
-
-  onDestroy(() => {
-    stopObservingPageSize?.();
-    keyboardStore.cleanup();
-  });
+  // The aligned position depends on the page size
+  onMount(() => observePageSize(mockupOverlayStore.setPageSize));
 
   /**
    * Pointer events on the overlay are only handled when the dock is in toolbar mode

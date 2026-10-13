@@ -1,14 +1,7 @@
 <script lang="ts">
-  // Svelte
-  import { onMount } from "svelte";
-
   // Stores
   import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
   import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
-
-  onMount(() => {
-    gridOverlayStore.init();
-  });
 
   let isGridVisible = $derived(!mockupOverlayStore.isSolidOrZoomed);
 

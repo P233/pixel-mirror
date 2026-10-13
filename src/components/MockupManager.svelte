@@ -1,20 +1,15 @@
 <script lang="ts">
-  // Svelte
-  import { onMount } from "svelte";
-
   // Constants
   import { ALLOWED_MIME_TYPES } from "~/constants";
 
   // Icons
   import IconDelete from "~/assets/delete-02-stroke-rounded.svg?component";
   import IconUpload from "~/assets/image-upload-stroke-rounded.svg?component";
+  // Platform
+  import { blobSrc } from "~/platform/blobSrc";
   // Stores
   import { DOCK_TRANSITION_DURATION, dockStore } from "~/stores/dockStore.svelte";
   import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
-
-  onMount(() => {
-    mockupManagerStore.init();
-  });
 
   function handleInputChange(e: Event) {
     const target = e.target as HTMLInputElement;
@@ -32,28 +27,6 @@
   function handleSelect(id: string) {
     dockStore.enterToolbar();
     setTimeout(() => mockupManagerStore.select(id), DOCK_TRANSITION_DURATION);
-  }
-
-  function blobSrc(node: HTMLImageElement, { buffer, mimeType }: { buffer: ArrayBuffer; mimeType: string }) {
-    let url: string | undefined;
-
-    function update(b: ArrayBuffer, t: string) {
-      if (url) URL.revokeObjectURL(url);
-      const blob = new Blob([b], { type: t });
-      url = URL.createObjectURL(blob);
-      node.src = url;
-    }
-
-    update(buffer, mimeType);
-
-    return {
-      update({ buffer: newBuffer, mimeType: newType }: { buffer: ArrayBuffer; mimeType: string }) {
-        update(newBuffer, newType);
-      },
-      destroy() {
-        if (url) URL.revokeObjectURL(url);
-      }
-    };
   }
 </script>
 
@@ -73,12 +46,7 @@
           {@const isActive = mockupManagerStore.activeMockupId === mockup.id}
           <div class="mockup" class:active={isActive}>
             <button class="mockup__preview" type="button" disabled={isActive} onclick={() => handleSelect(mockup.id)}>
-              <img
-                class="mockup__image"
-                use:blobSrc={{ buffer: mockup.thumbnailBuffer, mimeType: mockup.mimeType }}
-                alt={mockup.filename}
-                draggable="false"
-              />
+              <img class="mockup__image" {@attach blobSrc(mockup.thumbnail)} alt={mockup.filename} draggable="false" />
             </button>
             {#if isActive}
               <div class="mockup__indicator"></div>
