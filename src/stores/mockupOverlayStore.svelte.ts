@@ -36,7 +36,7 @@ import {
   ZOOM_FACTOR
 } from "~/constants";
 // Model
-import { distance, focusPoint, midpoint, resolvePosition } from "~/features/overlay/geometry";
+import { focusPoint, resolvePosition } from "~/features/overlay/geometry";
 import {
   alignmentX as getAlignmentX,
   alignmentY as getAlignmentY,
@@ -97,8 +97,7 @@ function createMockupOverlayStore() {
   // Incremented on every load so a slow, superseded load can't overwrite a newer one
   let loadToken = 0;
 
-  // Gesture state (not reactive)
-  let pinchStartDistance = 0;
+  // Gesture start state (not reactive)
   let pinchStartView: View = { x: 0, y: 0, scale: 1 };
   let pinchCenter: Position = { x: 0, y: 0 };
   let panStart: Position = { x: 0, y: 0 };
@@ -200,23 +199,7 @@ function createMockupOverlayStore() {
 
   function exitInspection() {
     if (interaction.kind !== "inspecting") return;
-
-    window.removeEventListener("mousemove", handleZoomModeMove);
     interaction = IDLE;
-  }
-
-  // ============================================
-  // Event handlers
-  // ============================================
-
-  function handleGlobalMouseMove(e: MouseEvent) {
-    if (interaction.kind !== "dragging") return;
-
-    const { pointerStart, origin } = interaction;
-    interaction = {
-      ...interaction,
-      current: { x: origin.x + e.clientX - pointerStart.x, y: origin.y + e.clientY - pointerStart.y }
-    };
   }
 
   function endDrag() {
@@ -226,30 +209,6 @@ function createMockupOverlayStore() {
     interaction = IDLE;
     placeAt(finalPosition);
     persist("position", { ...finalPosition });
-  }
-
-  function handleGlobalMouseUp() {
-    if (interaction.kind !== "dragging") return;
-
-    window.removeEventListener("mousemove", handleGlobalMouseMove);
-    window.removeEventListener("mouseup", handleGlobalMouseUp);
-    endDrag();
-  }
-
-  function handleZoomModeMove(e: MouseEvent) {
-    if (interaction.kind !== "inspecting" || !interaction.zoom || !interaction.view) return;
-
-    // Inverse direction: moving the mouse pans the viewport over the zoomed mockup
-    const { zoom, view } = interaction;
-    interaction = {
-      ...interaction,
-      zoom: { ...zoom, isPanning: true },
-      view: {
-        ...view,
-        x: zoom.origin.x - (e.clientX - zoom.pointerStart.x),
-        y: zoom.origin.y - (e.clientY - zoom.pointerStart.y)
-      }
-    };
   }
 
   /** Scale around the pinch center captured at the start of the pinch */
@@ -495,21 +454,62 @@ function createMockupOverlayStore() {
     },
 
     // ============================================
-    // Drag (only from visible mode)
+    // Gestures
     // ============================================
+    // Points are client (viewport) coordinates, as reported by pointer events.
+    // The gesture layer (features/overlay/gestures.ts) decides which of these to call.
 
-    startDrag: (e: MouseEvent) => {
+    /** Start moving the mockup (visible mode only) */
+    beginDrag: (point: Position) => {
       if (!can.reposition(mode)) return;
 
       interaction = {
         kind: "dragging",
-        pointerStart: { x: e.clientX, y: e.clientY },
+        pointerStart: point,
         origin: { ...placedPosition },
         current: { ...placedPosition }
       };
+    },
 
-      window.addEventListener("mousemove", handleGlobalMouseMove);
-      window.addEventListener("mouseup", handleGlobalMouseUp);
+    dragTo: (point: Position) => {
+      if (interaction.kind !== "dragging") return;
+
+      const { pointerStart, origin } = interaction;
+      interaction = {
+        ...interaction,
+        current: { x: origin.x + point.x - pointerStart.x, y: origin.y + point.y - pointerStart.y }
+      };
+    },
+
+    /** Finish the drag: the mockup stays where it was dropped, unaligned */
+    endDrag,
+
+    /** Solid mode, one finger: the mockup follows the finger */
+    beginPan: (point: Position) => {
+      if (mode !== "solid") return;
+
+      panStart = point;
+      panStartView = currentView();
+    },
+
+    panTo: (point: Position) => {
+      if (mode !== "solid") return;
+
+      setView({ ...panStartView, x: panStartView.x + point.x - panStart.x, y: panStartView.y + point.y - panStart.y });
+    },
+
+    /** Solid mode, two fingers: zoom around the point between them */
+    beginPinch: (center: Position) => {
+      if (mode !== "solid") return;
+
+      pinchStartView = currentView();
+      pinchCenter = toPagePoint(center.x, center.y);
+    },
+
+    /** @param scaleFactor current finger distance / distance at the start of the pinch */
+    pinchTo: (scaleFactor: number) => {
+      if (mode !== "solid") return;
+      applyPinch(scaleFactor);
     },
 
     // ============================================
@@ -523,92 +523,8 @@ function createMockupOverlayStore() {
 
     exitSolidMode: exitInspection,
 
-    // ============================================
-    // Zoom Mode (only from solid mode)
-    // ============================================
-
-    enterZoomMode: (e: MouseEvent) => {
-      if (interaction.kind !== "inspecting" || !can.zoom(mode)) return;
-
-      const from = currentView();
-      const zoomScale = from.scale * ZOOM_FACTOR;
-      // Bring the clicked mockup point to the center of the viewport
-      const zoomed = focusPoint(from, from.scale, zoomScale, toPagePoint(e.clientX, e.clientY), readViewportCenter());
-
-      interaction = {
-        kind: "inspecting",
-        view: { ...zoomed, scale: zoomScale },
-        zoom: {
-          returnTo: interaction.view,
-          pointerStart: { x: e.clientX, y: e.clientY },
-          origin: zoomed,
-          isPanning: false
-        }
-      };
-
-      window.addEventListener("mousemove", handleZoomModeMove);
-    },
-
-    exitZoomMode: () => {
-      if (interaction.kind !== "inspecting" || !interaction.zoom) return;
-
-      window.removeEventListener("mousemove", handleZoomModeMove);
-      interaction = { kind: "inspecting", view: interaction.zoom.returnTo, zoom: null };
-    },
-
-    // ============================================
-    // Cleanup
-    // ============================================
-
-    cleanup: () => {
-      window.removeEventListener("mousemove", handleGlobalMouseMove);
-      window.removeEventListener("mouseup", handleGlobalMouseUp);
-      window.removeEventListener("mousemove", handleZoomModeMove);
-      // The active object URL is kept: the store outlives component mounts, and a remount reuses it
-    },
-
-    // ============================================
-    // Mobile Touch Methods
-    // ============================================
-    // Mobile: no zoomed state; double tap toggles solid mode, in which
-    // pinch zooms and a single finger pans (following the finger)
-
     /**
-     * Start touch drag (visible mode only)
-     */
-    startTouchDrag: (e: TouchEvent) => {
-      if (!can.reposition(mode)) return;
-
-      const touch = e.touches[0];
-      interaction = {
-        kind: "dragging",
-        pointerStart: { x: touch.clientX, y: touch.clientY },
-        origin: { ...placedPosition },
-        current: { ...placedPosition }
-      };
-    },
-
-    /**
-     * Handle touch drag movement
-     */
-    handleTouchDrag: (e: TouchEvent) => {
-      if (interaction.kind !== "dragging") return;
-
-      const touch = e.touches[0];
-      const { pointerStart, origin } = interaction;
-      interaction = {
-        ...interaction,
-        current: { x: origin.x + touch.clientX - pointerStart.x, y: origin.y + touch.clientY - pointerStart.y }
-      };
-    },
-
-    /**
-     * End touch drag - persist position
-     */
-    endTouchDrag: endDrag,
-
-    /**
-     * Toggle solid mode on mobile (double tap)
+     * Toggle solid mode on touch devices (double tap)
      */
     toggleMobileSolidMode: () => {
       if (mode === "solid") {
@@ -618,88 +534,45 @@ function createMockupOverlayStore() {
       }
     },
 
-    /**
-     * Start pinch zoom (solid mode, 2 fingers) - Touch Events fallback
-     */
-    startPinch: (e: TouchEvent) => {
-      if (mode !== "solid" || e.touches.length < 2) return;
-
-      const a = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      const b = { x: e.touches[1].clientX, y: e.touches[1].clientY };
-      const center = midpoint(a, b);
-
-      pinchStartDistance = distance(a, b);
-      pinchStartView = currentView();
-      // Fix the center point at pinch start (in page coordinates)
-      pinchCenter = toPagePoint(center.x, center.y);
-    },
-
-    /**
-     * Handle pinch zoom - Touch Events fallback
-     */
-    handlePinch: (e: TouchEvent) => {
-      if (mode !== "solid" || e.touches.length < 2 || pinchStartDistance === 0) return;
-
-      const a = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      const b = { x: e.touches[1].clientX, y: e.touches[1].clientY };
-      applyPinch(distance(a, b) / pinchStartDistance);
-    },
-
-    /**
-     * End pinch - reset pinch state
-     */
-    endPinch: () => {
-      pinchStartDistance = 0;
-    },
-
     // ============================================
-    // Safari Gesture Events (preferred on iOS/Safari)
+    // Zoom Mode (desktop, only from solid mode)
     // ============================================
 
-    /**
-     * Start gesture pinch (Safari Gesture Events)
-     * @param centerX - center X coordinate of the gesture (in page coordinates)
-     * @param centerY - center Y coordinate of the gesture (in page coordinates)
-     */
-    startGesturePinch: (centerX: number, centerY: number) => {
-      if (mode !== "solid") return;
+    /** Zoom in 2x, bringing the clicked point to the center of the viewport */
+    enterZoomMode: (point: Position) => {
+      if (interaction.kind !== "inspecting" || !can.zoom(mode)) return;
 
-      pinchStartView = currentView();
-      pinchCenter = { x: centerX, y: centerY };
+      const from = currentView();
+      const zoomScale = from.scale * ZOOM_FACTOR;
+      const zoomed = focusPoint(from, from.scale, zoomScale, toPagePoint(point.x, point.y), readViewportCenter());
+
+      interaction = {
+        kind: "inspecting",
+        view: { ...zoomed, scale: zoomScale },
+        zoom: { returnTo: interaction.view, pointerStart: point, origin: zoomed, isPanning: false }
+      };
     },
 
-    /**
-     * Handle gesture pinch (Safari Gesture Events)
-     * @param gestureScale - cumulative scale from gesture start (e.scale from GestureEvent)
-     */
-    handleGesturePinch: (gestureScale: number) => {
-      if (mode !== "solid") return;
-      applyPinch(gestureScale);
+    exitZoomMode: () => {
+      if (interaction.kind !== "inspecting" || !interaction.zoom) return;
+
+      interaction = { kind: "inspecting", view: interaction.zoom.returnTo, zoom: null };
     },
 
-    /**
-     * Start solid mode pan (single finger in solid mode)
-     */
-    startSolidPan: (e: TouchEvent) => {
-      if (mode !== "solid") return;
+    /** Mouse moves while zoomed: inverse direction, like moving the viewport over the mockup */
+    zoomPanTo: (point: Position) => {
+      if (interaction.kind !== "inspecting" || !interaction.zoom || !interaction.view) return;
 
-      const touch = e.touches[0];
-      panStart = { x: touch.clientX, y: touch.clientY };
-      panStartView = currentView();
-    },
-
-    /**
-     * Handle solid mode pan - follows finger direction (same direction)
-     */
-    handleSolidPan: (e: TouchEvent) => {
-      if (mode !== "solid") return;
-
-      const touch = e.touches[0];
-      setView({
-        ...panStartView,
-        x: panStartView.x + touch.clientX - panStart.x,
-        y: panStartView.y + touch.clientY - panStart.y
-      });
+      const { zoom, view } = interaction;
+      interaction = {
+        ...interaction,
+        zoom: { ...zoom, isPanning: true },
+        view: {
+          ...view,
+          x: zoom.origin.x - (point.x - zoom.pointerStart.x),
+          y: zoom.origin.y - (point.y - zoom.pointerStart.y)
+        }
+      };
     }
   };
 

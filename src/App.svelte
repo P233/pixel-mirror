@@ -2,67 +2,31 @@
 <svelte:options customElement={{ shadow: "open" }} />
 
 <script lang="ts">
+  import { on } from "svelte/events";
   import Dock from "~/components/Dock.svelte";
   import DropZone from "~/components/DropZone.svelte";
   import GridOverlay from "~/components/GridOverlay.svelte";
   import MockupOverlay from "~/components/MockupOverlay.svelte";
   import Toast from "~/components/Toast.svelte";
-  import { ALLOWED_MIME_TYPES, DOUBLE_TAP_DELAY, DRAG_THRESHOLD_GLOBAL, SCROLL_COOLDOWN } from "~/constants";
+  import { ALLOWED_MIME_TYPES } from "~/constants";
+  import { createDoubleTapDetector } from "~/features/overlay/doubleTap";
   import { dockStore } from "~/stores/dockStore.svelte";
   import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
   import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
   import { isTouchDevice } from "~/utils/device";
 
-  // Global double-tap state
-  let lastTapTime = 0;
-  let lastTapPos = { x: 0, y: 0 };
-  let lastScrollTime = 0;
-  let isScrolling = false;
-  let scrollEndTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function handleScroll() {
-    lastScrollTime = Date.now();
-    isScrolling = true;
-
-    // Clear existing timer
-    if (scrollEndTimer) clearTimeout(scrollEndTimer);
-
-    // Mark scroll as ended after a short delay
-    scrollEndTimer = setTimeout(() => {
-      isScrolling = false;
-    }, SCROLL_COOLDOWN);
-  }
+  // Global double-tap: anywhere on the page (dock included) toggles solid mode
+  const doubleTap = createDoubleTapDetector();
 
   function handleGlobalTouchEnd(e: TouchEvent) {
-    // Skip if in manager mode (mockups/grids panels)
-    if (dockStore.isManagerMode) return;
-
-    // Only handle single finger release
-    if (e.touches.length !== 0) return;
-
-    // Skip if user was scrolling recently (prevents accidental double-tap after scroll)
-    if (isScrolling || Date.now() - lastScrollTime < SCROLL_COOLDOWN) {
-      lastTapTime = 0; // Reset tap state
-      return;
-    }
+    // Skip in manager mode (mockups/grids panels) and while other fingers are still down
+    if (dockStore.isManagerMode || e.touches.length !== 0) return;
 
     const touch = e.changedTouches[0];
-    const now = Date.now();
-
-    // Check if this is a double-tap
-    const timeDiff = now - lastTapTime;
-    const dx = Math.abs(touch.clientX - lastTapPos.x);
-    const dy = Math.abs(touch.clientY - lastTapPos.y);
-
-    if (timeDiff < DOUBLE_TAP_DELAY && dx < DRAG_THRESHOLD_GLOBAL && dy < DRAG_THRESHOLD_GLOBAL) {
-      // Double-tap detected - toggle solid mode
+    if (doubleTap.tap({ x: touch.clientX, y: touch.clientY }, Date.now())) {
+      // Also stops the second tap from clicking whatever is under it
       e.preventDefault();
       mockupOverlayStore.toggleMobileSolidMode();
-      lastTapTime = 0; // Reset to prevent triple-tap
-    } else {
-      // Record this tap for potential double-tap
-      lastTapTime = now;
-      lastTapPos = { x: touch.clientX, y: touch.clientY };
     }
   }
 
@@ -117,17 +81,13 @@
 
   // Global drag-and-drop listeners
   $effect(() => {
-    document.addEventListener("dragenter", handleGlobalDragEnter);
-    document.addEventListener("dragleave", handleGlobalDragLeave);
-    document.addEventListener("dragover", handleGlobalDragOver);
-    document.addEventListener("drop", handleGlobalDrop);
-
-    return () => {
-      document.removeEventListener("dragenter", handleGlobalDragEnter);
-      document.removeEventListener("dragleave", handleGlobalDragLeave);
-      document.removeEventListener("dragover", handleGlobalDragOver);
-      document.removeEventListener("drop", handleGlobalDrop);
-    };
+    const stops = [
+      on(document, "dragenter", handleGlobalDragEnter),
+      on(document, "dragleave", handleGlobalDragLeave),
+      on(document, "dragover", handleGlobalDragOver),
+      on(document, "drop", handleGlobalDrop)
+    ];
+    return () => stops.forEach((stop) => stop());
   });
 
   // Conditionally prevent browser zoom gestures and enable global double-tap
@@ -138,24 +98,17 @@
     // Only set up touch handlers on devices that support touch
     // Keyboard shortcuts are handled separately and always work
     if (!isTouchDevice()) return;
+    if (mockupOverlayStore.isHidden || !mockupOverlayStore.activeMockupUrl) return;
 
-    const isMockupVisible = !mockupOverlayStore.isHidden && !!mockupOverlayStore.activeMockupUrl;
-
-    if (isMockupVisible) {
-      document.documentElement.style.touchAction = "pan-x pan-y";
-      document.addEventListener("touchend", handleGlobalTouchEnd, { passive: false });
-      window.addEventListener("scroll", handleScroll, { passive: true });
-    } else {
-      document.documentElement.style.touchAction = "";
-      document.removeEventListener("touchend", handleGlobalTouchEnd);
-      window.removeEventListener("scroll", handleScroll);
-    }
+    document.documentElement.style.touchAction = "pan-x pan-y";
+    const stops = [
+      on(document, "touchend", handleGlobalTouchEnd, { passive: false }),
+      on(window, "scroll", () => doubleTap.scrolled(Date.now()), { passive: true })
+    ];
 
     return () => {
       document.documentElement.style.touchAction = "";
-      document.removeEventListener("touchend", handleGlobalTouchEnd);
-      window.removeEventListener("scroll", handleScroll);
-      if (scrollEndTimer) clearTimeout(scrollEndTimer);
+      stops.forEach((stop) => stop());
     };
   });
 </script>

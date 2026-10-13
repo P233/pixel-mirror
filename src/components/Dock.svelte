@@ -32,10 +32,11 @@
   let showAlignmentOptions = $state(false);
   let dockElement: HTMLDivElement;
 
-  // Mobile touch state for opacity slider
+  // Touch slide on the opacity button
   let opacitySliding = $state(false);
   let opacitySlideStartX = 0;
   let opacitySlideStartValue = 0;
+  let opacityPointerType = "";
 
   // Derived values from mockupOverlayStore
   let opacityDisplay = $derived(Math.round(mockupOverlayStore.opacity * 100));
@@ -104,41 +105,36 @@
   }
 
   /**
-   * Start opacity touch slide
+   * Touch: slide horizontally on the opacity button to adjust it (100px = 50%)
    */
-  function handleOpacityTouchStart(e: TouchEvent) {
-    if (!isTouchDevice()) return;
+  function handleOpacityPointerDown(e: PointerEvent) {
+    opacityPointerType = e.pointerType;
+    if (e.pointerType !== "touch") return;
 
-    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     opacitySliding = true;
-    opacitySlideStartX = e.touches[0].clientX;
+    opacitySlideStartX = e.clientX;
     opacitySlideStartValue = mockupOverlayStore.opacity;
-
-    window.addEventListener("touchmove", handleOpacityTouchMove, { passive: false });
-    window.addEventListener("touchend", handleOpacityTouchEnd);
   }
 
-  /**
-   * Handle opacity touch move - adjust opacity based on horizontal slide
-   */
-  function handleOpacityTouchMove(e: TouchEvent) {
+  function handleOpacityPointerMove(e: PointerEvent) {
     if (!opacitySliding) return;
 
-    e.preventDefault();
-    const dx = e.touches[0].clientX - opacitySlideStartX;
-    // 100px slide = 50% opacity change
-    const deltaOpacity = dx / 200;
-    const newOpacity = opacitySlideStartValue + deltaOpacity;
-    mockupOverlayStore.setOpacity(newOpacity);
+    const dx = e.clientX - opacitySlideStartX;
+    mockupOverlayStore.setOpacity(opacitySlideStartValue + dx / 200);
+  }
+
+  function handleOpacityPointerEnd() {
+    opacitySliding = false;
   }
 
   /**
-   * End opacity touch slide
+   * Mouse and keyboard reset the opacity; a touch tap doesn't, since touch is for sliding
    */
-  function handleOpacityTouchEnd() {
-    opacitySliding = false;
-    window.removeEventListener("touchmove", handleOpacityTouchMove);
-    window.removeEventListener("touchend", handleOpacityTouchEnd);
+  function handleOpacityClick(e: MouseEvent) {
+    // detail is 0 for keyboard activation, which has no pointerdown
+    if (e.detail !== 0 && opacityPointerType === "touch") return;
+    mockupOverlayStore.resetOpacity();
   }
 
   // Effect to close alignment popover when clicking outside the dock on mobile
@@ -238,8 +234,12 @@
         class:sliding={opacitySliding}
         data-testid="btn-opacity"
         disabled={isControlsDisabled}
-        onclick={mockupOverlayStore.resetOpacity}
-        ontouchstart={isTouchDevice() ? handleOpacityTouchStart : undefined}
+        style:touch-action="none"
+        onclick={handleOpacityClick}
+        onpointerdown={handleOpacityPointerDown}
+        onpointermove={handleOpacityPointerMove}
+        onpointerup={handleOpacityPointerEnd}
+        onpointercancel={handleOpacityPointerEnd}
         title="Opacity (Click to reset, Ctrl+Scroll to adjust)"
       >
         <IconOpacity />

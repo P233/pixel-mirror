@@ -27,6 +27,9 @@ vi.mock("./toastStore.svelte", () => ({
   }
 }));
 
+// Gestures take client coordinates as plain points
+const at = (e: { clientX: number; clientY: number }): Position => ({ x: e.clientX, y: e.clientY });
+
 describe("mockupOverlayStore", () => {
   let mockupOverlayStore: typeof import("./mockupOverlayStore.svelte").mockupOverlayStore;
   let getMockup: ReturnType<typeof vi.fn>;
@@ -55,12 +58,6 @@ describe("mockupOverlayStore", () => {
     // Import fresh store
     const module = await import("./mockupOverlayStore.svelte");
     mockupOverlayStore = module.mockupOverlayStore;
-  });
-
-  afterEach(() => {
-    if (mockupOverlayStore) {
-      mockupOverlayStore.cleanup();
-    }
   });
 
   describe("initial state", () => {
@@ -144,7 +141,7 @@ describe("mockupOverlayStore", () => {
 
       it("can start drag (visible → dragging)", () => {
         const mockEvent = { clientX: 100, clientY: 100 } as MouseEvent;
-        mockupOverlayStore.startDrag(mockEvent);
+        mockupOverlayStore.beginDrag(at(mockEvent));
 
         expect(mockupOverlayStore.mode).toBe("dragging");
         expect(mockupOverlayStore.isDragging).toBe(true);
@@ -172,7 +169,7 @@ describe("mockupOverlayStore", () => {
 
       it("cannot start drag", () => {
         const mockEvent = { clientX: 100, clientY: 100 } as MouseEvent;
-        mockupOverlayStore.startDrag(mockEvent);
+        mockupOverlayStore.beginDrag(at(mockEvent));
 
         expect(mockupOverlayStore.mode).toBe("locked");
       });
@@ -242,8 +239,6 @@ describe("mockupOverlayStore", () => {
 
         store.exitSolidMode();
         expect(store.mode).toBe("locked");
-
-        store.cleanup();
       });
 
       it("cannot toggle lock", () => {
@@ -254,7 +249,7 @@ describe("mockupOverlayStore", () => {
 
       it("cannot start drag", () => {
         const mockEvent = { clientX: 100, clientY: 100 } as MouseEvent;
-        mockupOverlayStore.startDrag(mockEvent);
+        mockupOverlayStore.beginDrag(at(mockEvent));
 
         expect(mockupOverlayStore.mode).toBe("solid");
       });
@@ -273,7 +268,7 @@ describe("mockupOverlayStore", () => {
 
       it("can enter zoom from solid (solid → zoomed)", () => {
         const mockEvent = { clientX: 500, clientY: 300 } as MouseEvent;
-        mockupOverlayStore.enterZoomMode(mockEvent);
+        mockupOverlayStore.enterZoomMode(at(mockEvent));
 
         expect(mockupOverlayStore.mode).toBe("zoomed");
       });
@@ -282,21 +277,21 @@ describe("mockupOverlayStore", () => {
         const originalScale = mockupOverlayStore.scale;
         const mockEvent = { clientX: 500, clientY: 300 } as MouseEvent;
 
-        mockupOverlayStore.enterZoomMode(mockEvent);
+        mockupOverlayStore.enterZoomMode(at(mockEvent));
 
         expect(mockupOverlayStore.scale).toBe(originalScale * 2);
       });
 
       it("reports isSolidOrZoomed as true", () => {
         const mockEvent = { clientX: 500, clientY: 300 } as MouseEvent;
-        mockupOverlayStore.enterZoomMode(mockEvent);
+        mockupOverlayStore.enterZoomMode(at(mockEvent));
 
         expect(mockupOverlayStore.isSolidOrZoomed).toBe(true);
       });
 
       it("can exit zoom to solid (zoomed → solid)", () => {
         const mockEvent = { clientX: 500, clientY: 300 } as MouseEvent;
-        mockupOverlayStore.enterZoomMode(mockEvent);
+        mockupOverlayStore.enterZoomMode(at(mockEvent));
 
         mockupOverlayStore.exitZoomMode();
 
@@ -307,7 +302,7 @@ describe("mockupOverlayStore", () => {
         const originalScale = mockupOverlayStore.scale;
         const mockEvent = { clientX: 500, clientY: 300 } as MouseEvent;
 
-        mockupOverlayStore.enterZoomMode(mockEvent);
+        mockupOverlayStore.enterZoomMode(at(mockEvent));
         mockupOverlayStore.exitZoomMode();
 
         expect(mockupOverlayStore.scale).toBe(originalScale);
@@ -315,7 +310,7 @@ describe("mockupOverlayStore", () => {
 
       it("can exit zoom via exitSolidMode (zoomed → visible/locked)", () => {
         const mockEvent = { clientX: 500, clientY: 300 } as MouseEvent;
-        mockupOverlayStore.enterZoomMode(mockEvent);
+        mockupOverlayStore.enterZoomMode(at(mockEvent));
 
         mockupOverlayStore.exitSolidMode();
 
@@ -326,14 +321,14 @@ describe("mockupOverlayStore", () => {
     describe("dragging state", () => {
       it("transitions to dragging on mouse down", () => {
         const mockEvent = { clientX: 100, clientY: 100 } as MouseEvent;
-        mockupOverlayStore.startDrag(mockEvent);
+        mockupOverlayStore.beginDrag(at(mockEvent));
 
         expect(mockupOverlayStore.mode).toBe("dragging");
       });
 
       it("reports isDragging as true", () => {
         const mockEvent = { clientX: 100, clientY: 100 } as MouseEvent;
-        mockupOverlayStore.startDrag(mockEvent);
+        mockupOverlayStore.beginDrag(at(mockEvent));
 
         expect(mockupOverlayStore.isDragging).toBe(true);
       });
@@ -342,7 +337,7 @@ describe("mockupOverlayStore", () => {
         mockupOverlayStore.toggleLock();
         const mockEvent = { clientX: 100, clientY: 100 } as MouseEvent;
 
-        mockupOverlayStore.startDrag(mockEvent);
+        mockupOverlayStore.beginDrag(at(mockEvent));
 
         expect(mockupOverlayStore.mode).toBe("locked");
         expect(mockupOverlayStore.isDragging).toBe(false);
@@ -573,8 +568,6 @@ describe("mockupOverlayStore", () => {
 
       store.cycleScale();
       expect(store.scale).toBe(1);
-
-      store.cleanup();
     });
 
     it("persists scale and position changes", () => {
@@ -750,13 +743,12 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.activeMockupUrl).toBe(urlForB);
     });
 
-    it("keeps the active image URL usable across cleanup and re-init (remount)", async () => {
+    it("keeps the active image URL usable when re-initialized (remount)", async () => {
       getSettingsByGroup.mockResolvedValue({ activeMockupId: "a" });
       getMockup.mockImplementation(async (id: string) => mockup(id));
       await mockupOverlayStore.init();
       const url = mockupOverlayStore.activeMockupUrl;
 
-      mockupOverlayStore.cleanup();
       await mockupOverlayStore.init();
 
       expect(mockupOverlayStore.activeMockupUrl).toBe(url);
@@ -830,11 +822,11 @@ describe("mockupOverlayStore", () => {
       Object.defineProperty(window, "scrollX", { value: 0, configurable: true });
       Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
       mockupOverlayStore.enterSolidMode();
-      mockupOverlayStore.startGesturePinch(0, 0);
-      mockupOverlayStore.handleGesturePinch(1.5);
+      mockupOverlayStore.beginPinch({ x: 0, y: 0 });
+      mockupOverlayStore.pinchTo(1.5);
       const pinched = { position: { ...mockupOverlayStore.position }, scale: mockupOverlayStore.scale };
 
-      mockupOverlayStore.enterZoomMode(new MouseEvent("pointerdown", { clientX: 10, clientY: 10 }));
+      mockupOverlayStore.enterZoomMode({ x: 10, y: 10 });
       expect(mockupOverlayStore.scale).toBe(3);
       mockupOverlayStore.exitZoomMode();
 
@@ -851,8 +843,8 @@ describe("mockupOverlayStore", () => {
     it("restores the pre-solid scale when hiding from mobile solid mode", () => {
       mockupOverlayStore.cycleScale(); // 1x -> 0.5x
       mockupOverlayStore.toggleMobileSolidMode();
-      mockupOverlayStore.startGesturePinch(0, 0);
-      mockupOverlayStore.handleGesturePinch(3);
+      mockupOverlayStore.beginPinch({ x: 0, y: 0 });
+      mockupOverlayStore.pinchTo(3);
 
       mockupOverlayStore.toggleVisibility();
 
@@ -862,34 +854,12 @@ describe("mockupOverlayStore", () => {
 
     it("restores the pre-solid scale when exiting desktop solid mode after a pinch", () => {
       mockupOverlayStore.enterSolidMode();
-      mockupOverlayStore.startGesturePinch(0, 0);
-      mockupOverlayStore.handleGesturePinch(2);
+      mockupOverlayStore.beginPinch({ x: 0, y: 0 });
+      mockupOverlayStore.pinchTo(2);
 
       mockupOverlayStore.exitSolidMode();
 
       expect(mockupOverlayStore.scale).toBe(1);
-    });
-  });
-
-  describe("cleanup", () => {
-    it("removes event listeners", async () => {
-      await mockupOverlayStore.init();
-
-      const removeSpy = vi.spyOn(window, "removeEventListener");
-
-      mockupOverlayStore.cleanup();
-
-      expect(removeSpy).toHaveBeenCalled();
-      removeSpy.mockRestore();
-    });
-
-    it("does not throw when called multiple times", async () => {
-      await mockupOverlayStore.init();
-
-      expect(() => {
-        mockupOverlayStore.cleanup();
-        mockupOverlayStore.cleanup();
-      }).not.toThrow();
     });
   });
 
@@ -955,61 +925,58 @@ describe("mockupOverlayStore", () => {
       });
     });
 
-    describe("touch drag (visible mode)", () => {
-      it("starts touch drag from visible mode", () => {
-        const mockTouch = { clientX: 100, clientY: 100 };
-        const mockEvent = { touches: [mockTouch] } as unknown as TouchEvent;
-
-        mockupOverlayStore.startTouchDrag(mockEvent);
+    describe("drag", () => {
+      it("starts from visible mode", () => {
+        mockupOverlayStore.beginDrag({ x: 100, y: 100 });
 
         expect(mockupOverlayStore.mode).toBe("dragging");
       });
 
-      it("does not start touch drag from locked mode", () => {
+      it("does not start from locked mode", () => {
         mockupOverlayStore.toggleLock();
-        const mockTouch = { clientX: 100, clientY: 100 };
-        const mockEvent = { touches: [mockTouch] } as unknown as TouchEvent;
 
-        mockupOverlayStore.startTouchDrag(mockEvent);
+        mockupOverlayStore.beginDrag({ x: 100, y: 100 });
 
         expect(mockupOverlayStore.mode).toBe("locked");
       });
 
-      it("handles touch drag movement", () => {
-        const startTouch = { clientX: 100, clientY: 100 };
-        const moveTouch = { clientX: 150, clientY: 200 };
-        const startEvent = { touches: [startTouch] } as unknown as TouchEvent;
-        const moveEvent = { touches: [moveTouch] } as unknown as TouchEvent;
-
+      it("moves with the pointer", () => {
         const initialPosition = { ...mockupOverlayStore.position };
-        mockupOverlayStore.startTouchDrag(startEvent);
-        mockupOverlayStore.handleTouchDrag(moveEvent);
+
+        mockupOverlayStore.beginDrag({ x: 100, y: 100 });
+        mockupOverlayStore.dragTo({ x: 150, y: 200 });
 
         expect(mockupOverlayStore.position.x).toBe(initialPosition.x + 50);
         expect(mockupOverlayStore.position.y).toBe(initialPosition.y + 100);
       });
 
-      it("ends touch drag and persists position", () => {
-        const mockTouch = { clientX: 100, clientY: 100 };
-        const mockEvent = { touches: [mockTouch] } as unknown as TouchEvent;
-
-        mockupOverlayStore.startTouchDrag(mockEvent);
-        mockupOverlayStore.endTouchDrag();
+      it("persists the position when the drag ends", () => {
+        mockupOverlayStore.beginDrag({ x: 100, y: 100 });
+        mockupOverlayStore.dragTo({ x: 130, y: 90 });
+        mockupOverlayStore.endDrag();
 
         expect(mockupOverlayStore.mode).toBe("visible");
-        expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "position", expect.any(Object));
+        expect(updateSetting).toHaveBeenCalledWith("mockupOverlay", "position", mockupOverlayStore.position);
       });
 
-      it("clears alignment after touch drag", () => {
+      it("clears alignment after a drag", () => {
         mockupOverlayStore.setAlignment("top", "center");
-        const mockTouch = { clientX: 100, clientY: 100 };
-        const mockEvent = { touches: [mockTouch] } as unknown as TouchEvent;
 
-        mockupOverlayStore.startTouchDrag(mockEvent);
-        mockupOverlayStore.endTouchDrag();
+        mockupOverlayStore.beginDrag({ x: 100, y: 100 });
+        mockupOverlayStore.endDrag();
 
         expect(mockupOverlayStore.alignmentX).toBeNull();
         expect(mockupOverlayStore.alignmentY).toBeNull();
+      });
+
+      it("ignores dragTo and endDrag without a drag", () => {
+        const initialPosition = { ...mockupOverlayStore.position };
+
+        mockupOverlayStore.dragTo({ x: 500, y: 500 });
+        mockupOverlayStore.endDrag();
+
+        expect(mockupOverlayStore.position).toEqual(initialPosition);
+        expect(updateSetting).not.toHaveBeenCalledWith("mockupOverlay", "position", expect.anything());
       });
     });
 
@@ -1038,201 +1005,132 @@ describe("mockupOverlayStore", () => {
         expect(mockupOverlayStore.mode).toBe("locked");
       });
 
-      it("restores scale when exiting solid mode", () => {
-        const originalScale = mockupOverlayStore.scale;
+      it("restores scale and position when exiting solid mode after a pinch and pan", () => {
+        const before = { position: { ...mockupOverlayStore.position }, scale: mockupOverlayStore.scale };
         mockupOverlayStore.toggleMobileSolidMode(); // Enter
-
-        // Simulate pinch zoom by changing scale
-        // (In real usage this would be via handlePinch)
+        mockupOverlayStore.beginPinch({ x: 100, y: 100 });
+        mockupOverlayStore.pinchTo(2);
+        mockupOverlayStore.beginPan({ x: 0, y: 0 });
+        mockupOverlayStore.panTo({ x: 40, y: 40 });
 
         mockupOverlayStore.toggleMobileSolidMode(); // Exit
 
-        expect(mockupOverlayStore.scale).toBe(originalScale);
+        expect(mockupOverlayStore.scale).toBe(before.scale);
+        expect(mockupOverlayStore.position).toEqual(before.position);
       });
     });
 
     describe("pinch zoom (solid mode)", () => {
       beforeEach(() => {
-        mockupOverlayStore.enterSolidMode();
-        // Mock scroll position
         Object.defineProperty(window, "scrollX", { value: 0, configurable: true });
         Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
       });
 
-      it("starts pinch with two fingers", () => {
-        const mockEvent = {
-          touches: [
-            { clientX: 100, clientY: 100 },
-            { clientX: 200, clientY: 200 }
-          ]
-        } as unknown as TouchEvent;
+      it("scales relative to the scale at the start of the pinch", () => {
+        mockupOverlayStore.enterSolidMode();
+        mockupOverlayStore.beginPinch({ x: 150, y: 150 });
 
-        // Should not throw
-        expect(() => mockupOverlayStore.startPinch(mockEvent)).not.toThrow();
+        mockupOverlayStore.pinchTo(2);
+        expect(mockupOverlayStore.scale).toBe(2);
+
+        mockupOverlayStore.pinchTo(1.5);
+        expect(mockupOverlayStore.scale).toBe(1.5);
       });
 
-      it("does not start pinch with one finger", () => {
-        const mockEvent = {
-          touches: [{ clientX: 100, clientY: 100 }]
-        } as unknown as TouchEvent;
+      it("clamps the scale to the pinch range", () => {
+        mockupOverlayStore.enterSolidMode();
+        mockupOverlayStore.beginPinch({ x: 150, y: 150 });
 
-        // Should not throw and should not crash
-        expect(() => mockupOverlayStore.startPinch(mockEvent)).not.toThrow();
+        mockupOverlayStore.pinchTo(10);
+        expect(mockupOverlayStore.scale).toBe(4);
+
+        mockupOverlayStore.pinchTo(0.01);
+        expect(mockupOverlayStore.scale).toBe(0.25);
       });
 
-      it("handles pinch zoom", () => {
-        const initialScale = mockupOverlayStore.scale;
+      it("keeps the mockup point under the pinch center in place", () => {
+        mockupOverlayStore.enterSolidMode();
+        const start = { ...mockupOverlayStore.position };
+        const center = { x: 150, y: 150 };
+        const pointUnderCenter = { x: center.x - start.x, y: center.y - start.y };
 
-        // Start pinch with distance 100
-        const startEvent = {
-          touches: [
-            { clientX: 100, clientY: 100 },
-            { clientX: 200, clientY: 100 }
-          ]
-        } as unknown as TouchEvent;
-        mockupOverlayStore.startPinch(startEvent);
+        mockupOverlayStore.beginPinch(center);
+        mockupOverlayStore.pinchTo(2);
 
-        // Move fingers apart (distance 200, 2x zoom)
-        const moveEvent = {
-          touches: [
-            { clientX: 50, clientY: 100 },
-            { clientX: 250, clientY: 100 }
-          ]
-        } as unknown as TouchEvent;
-        mockupOverlayStore.handlePinch(moveEvent);
-
-        expect(mockupOverlayStore.scale).toBe(initialScale * 2);
+        expect(mockupOverlayStore.position).toEqual({
+          x: center.x - pointUnderCenter.x * 2,
+          y: center.y - pointUnderCenter.y * 2
+        });
       });
 
-      it("clamps scale to reasonable bounds", () => {
-        // Start pinch
-        const startEvent = {
-          touches: [
-            { clientX: 100, clientY: 100 },
-            { clientX: 200, clientY: 100 }
-          ]
-        } as unknown as TouchEvent;
-        mockupOverlayStore.startPinch(startEvent);
+      it("uses page coordinates for the center when the page is scrolled", () => {
+        Object.defineProperty(window, "scrollY", { value: 500, configurable: true });
+        mockupOverlayStore.enterSolidMode();
 
-        // Extreme zoom in (10x)
-        const extremeZoomEvent = {
-          touches: [
-            { clientX: 0, clientY: 100 },
-            { clientX: 1000, clientY: 100 }
-          ]
-        } as unknown as TouchEvent;
-        mockupOverlayStore.handlePinch(extremeZoomEvent);
+        mockupOverlayStore.beginPinch({ x: 0, y: 100 });
+        mockupOverlayStore.pinchTo(2);
 
-        expect(mockupOverlayStore.scale).toBeLessThanOrEqual(4);
+        // The mockup top-left (0, 0) is 600px above the page point (0, 600) under the fingers
+        expect(mockupOverlayStore.position).toEqual({ x: 0, y: -600 });
       });
 
-      it("resets pinch state on endPinch", () => {
-        const startEvent = {
-          touches: [
-            { clientX: 100, clientY: 100 },
-            { clientX: 200, clientY: 100 }
-          ]
-        } as unknown as TouchEvent;
-        mockupOverlayStore.startPinch(startEvent);
+      it("is ignored outside solid mode", () => {
+        mockupOverlayStore.beginPinch({ x: 150, y: 150 });
+        mockupOverlayStore.pinchTo(2);
 
-        // Should not throw
-        expect(() => mockupOverlayStore.endPinch()).not.toThrow();
+        expect(mockupOverlayStore.scale).toBe(1);
       });
     });
 
-    describe("Safari Gesture Events (startGesturePinch/handleGesturePinch)", () => {
-      beforeEach(() => {
+    describe("solid pan (one finger in solid mode)", () => {
+      it("follows the finger (same direction)", () => {
         mockupOverlayStore.enterSolidMode();
-        // Mock scroll position
-        Object.defineProperty(window, "scrollX", { value: 0, configurable: true });
-        Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
-      });
-
-      it("starts gesture pinch in solid mode", () => {
-        expect(() => mockupOverlayStore.startGesturePinch(150, 150)).not.toThrow();
-      });
-
-      it("does not start gesture pinch outside solid mode", () => {
-        mockupOverlayStore.exitSolidMode();
-        const initialScale = mockupOverlayStore.scale;
-
-        mockupOverlayStore.startGesturePinch(150, 150);
-        mockupOverlayStore.handleGesturePinch(2); // 2x scale
-
-        // Scale should remain unchanged
-        expect(mockupOverlayStore.scale).toBe(initialScale);
-      });
-
-      it("handles gesture pinch with e.scale value", () => {
-        const initialScale = mockupOverlayStore.scale;
-
-        mockupOverlayStore.startGesturePinch(150, 150);
-        mockupOverlayStore.handleGesturePinch(2); // 2x scale
-
-        expect(mockupOverlayStore.scale).toBe(initialScale * 2);
-      });
-
-      it("clamps gesture scale to bounds", () => {
-        mockupOverlayStore.startGesturePinch(150, 150);
-
-        // Extreme zoom
-        mockupOverlayStore.handleGesturePinch(10); // 10x scale
-
-        expect(mockupOverlayStore.scale).toBeLessThanOrEqual(4);
-      });
-
-      it("adjusts position to keep pinch center in place", () => {
-        const initialPosition = { ...mockupOverlayStore.position };
-        const centerX = 200;
-        const centerY = 300;
-
-        mockupOverlayStore.startGesturePinch(centerX, centerY);
-        mockupOverlayStore.handleGesturePinch(2); // 2x scale
-
-        // Position should change to keep the pinch center in place
-        // The exact calculation depends on the initial position and scale
-        expect(mockupOverlayStore.position.x).not.toBe(initialPosition.x);
-        expect(mockupOverlayStore.position.y).not.toBe(initialPosition.y);
-      });
-
-      it("endPinch resets state for gesture events too", () => {
-        mockupOverlayStore.startGesturePinch(150, 150);
-        mockupOverlayStore.handleGesturePinch(2);
-
-        expect(() => mockupOverlayStore.endPinch()).not.toThrow();
-      });
-    });
-
-    describe("solid pan (single finger in solid mode)", () => {
-      beforeEach(() => {
-        mockupOverlayStore.enterSolidMode();
-      });
-
-      it("starts solid pan", () => {
-        const mockEvent = {
-          touches: [{ clientX: 100, clientY: 100 }]
-        } as unknown as TouchEvent;
-
-        expect(() => mockupOverlayStore.startSolidPan(mockEvent)).not.toThrow();
-      });
-
-      it("handles solid pan movement (same direction)", () => {
         const initialPosition = { ...mockupOverlayStore.position };
 
-        const startEvent = {
-          touches: [{ clientX: 100, clientY: 100 }]
-        } as unknown as TouchEvent;
-        mockupOverlayStore.startSolidPan(startEvent);
+        mockupOverlayStore.beginPan({ x: 100, y: 100 });
+        mockupOverlayStore.panTo({ x: 150, y: 200 });
 
-        const moveEvent = {
-          touches: [{ clientX: 150, clientY: 200 }]
-        } as unknown as TouchEvent;
-        mockupOverlayStore.handleSolidPan(moveEvent);
-
-        // Same direction: finger moves right (+50), image moves right (+50)
         expect(mockupOverlayStore.position.x).toBe(initialPosition.x + 50);
-        // Same direction: finger moves down (+100), image moves down (+100)
         expect(mockupOverlayStore.position.y).toBe(initialPosition.y + 100);
+      });
+
+      it("is ignored outside solid mode", () => {
+        const initialPosition = { ...mockupOverlayStore.position };
+
+        mockupOverlayStore.beginPan({ x: 100, y: 100 });
+        mockupOverlayStore.panTo({ x: 150, y: 200 });
+
+        expect(mockupOverlayStore.position).toEqual(initialPosition);
+      });
+    });
+
+    describe("zoom pan (mouse while zoomed)", () => {
+      beforeEach(() => {
+        Object.defineProperty(document.documentElement, "clientWidth", { value: 1000, configurable: true });
+        Object.defineProperty(document.documentElement, "clientHeight", { value: 800, configurable: true });
+        Object.defineProperty(window, "scrollX", { value: 0, configurable: true });
+        Object.defineProperty(window, "scrollY", { value: 0, configurable: true });
+      });
+
+      it("moves the mockup opposite to the mouse, like moving the viewport", () => {
+        mockupOverlayStore.enterSolidMode();
+        mockupOverlayStore.enterZoomMode({ x: 100, y: 100 });
+        const zoomedPosition = { ...mockupOverlayStore.position };
+
+        mockupOverlayStore.zoomPanTo({ x: 130, y: 80 });
+
+        expect(mockupOverlayStore.isZoomPanning).toBe(true);
+        expect(mockupOverlayStore.position).toEqual({ x: zoomedPosition.x - 30, y: zoomedPosition.y + 20 });
+      });
+
+      it("is ignored when not zoomed", () => {
+        mockupOverlayStore.enterSolidMode();
+        const initialPosition = { ...mockupOverlayStore.position };
+
+        mockupOverlayStore.zoomPanTo({ x: 130, y: 80 });
+
+        expect(mockupOverlayStore.isZoomPanning).toBe(false);
+        expect(mockupOverlayStore.position).toEqual(initialPosition);
       });
     });
   });

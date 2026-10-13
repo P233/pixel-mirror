@@ -660,115 +660,69 @@ describe("Dock component (touch device)", () => {
     cleanup();
   });
 
-  // Helper to create TouchEvent
-  function createTouchEvent(type: string, clientX: number, clientY: number): TouchEvent {
-    const touch = {
-      identifier: 0,
-      clientX,
-      clientY,
-      target: null
-    } as unknown as Touch;
-
-    return new TouchEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      touches: type === "touchend" ? [] : [touch],
-      changedTouches: [touch]
-    });
-  }
+  const pointer = (type: string, pointerType: string, clientX = 0) =>
+    new PointerEvent(type, { pointerId: 1, pointerType, clientX, bubbles: true, cancelable: true });
 
   describe("opacity touch sliding", () => {
-    it("starts opacity slide on touchstart on opacity button", () => {
-      const { container } = render(Dock);
+    const opacityButton = () =>
+      render(Dock).container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
 
-      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
-      const touchEvent = createTouchEvent("touchstart", 100, 100);
-      opacityBtn.dispatchEvent(touchEvent);
+    it("adjusts opacity while sliding a finger (100px = 50% change)", () => {
+      const button = opacityButton();
 
-      // The button should have sliding class added (tracked via component state)
-      // We verify by checking that touchmove will work
-      expect(opacityBtn).toBeInTheDocument();
-    });
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointermove", "touch", 200));
 
-    it("adjusts opacity on touch slide (100px = 50% change)", () => {
-      const { container } = render(Dock);
-
-      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
-
-      // Start touch at x=100
-      const startEvent = createTouchEvent("touchstart", 100, 100);
-      opacityBtn.dispatchEvent(startEvent);
-
-      // Move right by 100px (should increase opacity by 0.5)
-      // 100px / 200 = 0.5 delta
-      const moveEvent = createTouchEvent("touchmove", 200, 100);
-      window.dispatchEvent(moveEvent);
-
-      // Initial opacity was 0.5, moving +100px should call setOpacity with 1.0
-      expect(mockMockupStore.setOpacity).toHaveBeenCalled();
+      expect(mockMockupStore.setOpacity).toHaveBeenLastCalledWith(1);
     });
 
     it("decreases opacity when sliding left", () => {
-      const { container } = render(Dock);
+      const button = opacityButton();
 
-      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointermove", "touch", 60));
 
-      // Start touch at x=100
-      const startEvent = createTouchEvent("touchstart", 100, 100);
-      opacityBtn.dispatchEvent(startEvent);
-
-      // Move left by 100px (should decrease opacity by 0.5)
-      const moveEvent = createTouchEvent("touchmove", 0, 100);
-      window.dispatchEvent(moveEvent);
-
-      // setOpacity should be called with a value less than initial
-      expect(mockMockupStore.setOpacity).toHaveBeenCalled();
+      expect(mockMockupStore.setOpacity).toHaveBeenLastCalledWith(0.3);
     });
 
-    it("ends opacity slide on touchend", () => {
-      const { container } = render(Dock);
-
-      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
-
-      // Start and move
-      const startEvent = createTouchEvent("touchstart", 100, 100);
-      opacityBtn.dispatchEvent(startEvent);
-
-      const moveEvent = createTouchEvent("touchmove", 150, 100);
-      window.dispatchEvent(moveEvent);
-
-      // End touch
-      const endEvent = createTouchEvent("touchend", 150, 100);
-      window.dispatchEvent(endEvent);
-
-      // After touchend, further moves should not trigger setOpacity
+    it.each(["pointerup", "pointercancel"])("stops sliding on %s", (endType) => {
+      const button = opacityButton();
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer(endType, "touch", 150));
       mockMockupStore.setOpacity.mockClear();
 
-      const anotherMoveEvent = createTouchEvent("touchmove", 200, 100);
-      window.dispatchEvent(anotherMoveEvent);
+      button.dispatchEvent(pointer("pointermove", "touch", 200));
 
       expect(mockMockupStore.setOpacity).not.toHaveBeenCalled();
     });
 
-    it("does not start opacity slide on desktop (non-touch device)", () => {
-      mockIsTouchDevice.mockReturnValue(false);
-      const { container } = render(Dock);
+    it("does not slide with a mouse, which clicks to reset instead", () => {
+      const button = opacityButton();
 
-      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
-      const touchEvent = createTouchEvent("touchstart", 100, 100);
-      opacityBtn.dispatchEvent(touchEvent);
+      button.dispatchEvent(pointer("pointerdown", "mouse", 100));
+      button.dispatchEvent(pointer("pointermove", "mouse", 200));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 
-      // On desktop, touchstart should not trigger the handler
-      // (ontouchstart is conditionally set based on isTouchDevice)
-      // The button should still work for click (resetOpacity)
-      expect(opacityBtn).toBeInTheDocument();
+      expect(mockMockupStore.setOpacity).not.toHaveBeenCalled();
+      expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
     });
 
-    it("clicking opacity button still resets opacity on touch device", () => {
-      const { container } = render(Dock);
+    it("does not reset on a touch tap", () => {
+      const button = opacityButton();
 
-      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
-      opacityBtn.click();
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointerup", "touch", 100));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+
+      expect(mockMockupStore.resetOpacity).not.toHaveBeenCalled();
+    });
+
+    it("resets from the keyboard even after a touch slide", () => {
+      const button = opacityButton();
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointerup", "touch", 100));
+
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
 
       expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
     });
