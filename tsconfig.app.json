@@ -5,7 +5,7 @@
     "target": "ES2022",
     "useDefineForClassFields": true,
     "module": "ESNext",
-    "types": ["svelte", "vite/client", "@testing-library/jest-dom"],
+    "types": ["svelte", "vite/client", "@testing-library/jest-dom/vitest"],
     "noEmit": true,
     /**
      * Typecheck JS in `.svelte` and `.js` files by default.
@@ -16,9 +16,8 @@
     "allowJs": true,
     "checkJs": true,
     "moduleDetection": "force",
-    "baseUrl": "src",
     "paths": {
-      "~/*": ["./*"]
+      "~/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"]
