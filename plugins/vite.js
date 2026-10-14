@@ -14,11 +14,12 @@ export default function pixelMirror() {
       server.middlewares.use(SCRIPT_URL, (_req, res) => {
         createReadStream(SCRIPT_FILE)
           .on("open", () => {
-            res.setHeader("Content-Type", "text/javascript");
+            res.setHeader("Content-Type", "text/javascript; charset=utf-8");
             res.setHeader("Cache-Control", "no-cache");
           })
           .on("error", () => {
             res.statusCode = 404;
+            res.setHeader("Content-Type", "text/plain; charset=utf-8");
             res.end(`pixel-mirror: ${SCRIPT_FILE} not found. Run the package build first.`);
           })
           .pipe(res);

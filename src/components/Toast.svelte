@@ -1,31 +1,40 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import IconWarning from "~/assets/alert-02-stroke-rounded.svg?component";
+  import { on } from "svelte/events";
+  import Icon from "./icons/Icon.svelte";
   import { toastStore } from "~/stores/toastStore.svelte";
 
-  let listenerAttached = false;
+  const AUTO_DISMISS_MS = 4500;
+  let isHovered = $state(false);
+
+  function dismiss() {
+    // The toast is removed without a mouseleave, so its hover pause must not carry over to the next one
+    isHovered = false;
+    toastStore.clear();
+  }
 
   $effect(() => {
     if (!toastStore.errorMessage) return;
-
-    window.addEventListener("mousedown", toastStore.clear);
-    listenerAttached = true;
-    return () => {
-      window.removeEventListener("mousedown", toastStore.clear);
-      listenerAttached = false;
-    };
+    return on(window, "mousedown", dismiss);
   });
 
-  onDestroy(() => {
-    if (listenerAttached) {
-      window.removeEventListener("mousedown", toastStore.clear);
-    }
+  $effect(() => {
+    if (!toastStore.errorMessage || isHovered) return;
+
+    const timer = setTimeout(dismiss, AUTO_DISMISS_MS);
+
+    return () => clearTimeout(timer);
   });
 </script>
 
 {#if toastStore.errorMessage}
-  <div class="toast">
-    <IconWarning />
+  <div
+    class="toast"
+    role="alert"
+    aria-live="assertive"
+    onmouseenter={() => (isHovered = true)}
+    onmouseleave={() => (isHovered = false)}
+  >
+    <span class="toast__icon"><Icon name="alert" size={18} /></span>
     <span class="toast__message">{toastStore.errorMessage}</span>
   </div>
 {/if}
@@ -33,39 +42,41 @@
 <style lang="scss">
   .toast {
     position: fixed;
-    top: rhythm(2);
+    top: rhythm(2.5);
     left: 50%;
     z-index: $max-z-index;
     display: flex;
-    gap: rhythm(1);
-    max-width: min(90vw, 400px);
-    padding: rhythm(1) rhythm(2);
-    font-family: "Arial", sans-serif;
-    color: #fff;
-    outline: $outline-width solid rgba(255, 255, 255, 0.5);
-    background: var(--color-danger);
-    border-radius: rhythm(2);
+    gap: rhythm(1.25);
+    align-items: flex-start;
+    width: max-content;
+    max-width: min(calc(100vw - #{rhythm(3)}), 440px);
+    padding: rhythm(1.25) rhythm(2) rhythm(1.25) rhythm(1.5);
+    font-family: var(--pm-font-sans);
+    color: var(--pm-text-primary);
+    background: var(--pm-surface-elevated);
+    border: $border-width-sm solid var(--pm-border-strong);
+    border-radius: var(--pm-radius-card);
+    box-shadow: var(--pm-shadow-panel);
     transform: translateX(-50%);
-    animation: toast-in 0.25s $timing-function;
+    animation: toast-in 0.22s $timing-function;
 
-    :global(> svg) {
-      flex-shrink: 0;
-      width: rhythm(2.5);
-      height: rhythm(2.5);
+    &__icon {
+      flex: none;
+      margin-top: 1px;
+      color: var(--pm-danger-text);
     }
 
     &__message {
-      padding: rhythm(0.125) 0;
-      font-size: 15px;
+      font-size: 13px;
       font-weight: 500;
-      line-height: rhythm(2.25);
+      line-height: 20px;
     }
   }
 
   @keyframes toast-in {
     from {
       opacity: 0;
-      transform: translateX(-50%) translateY(-12px);
+      transform: translateX(-50%) translateY(-10px);
     }
     to {
       opacity: 1;

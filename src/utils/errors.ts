@@ -17,17 +17,18 @@ export class ValidationError extends Error {
   }
 }
 
-// Alias for backwards compatibility
-export const FileError = ValidationError;
-export type FileError = ValidationError;
+/** A tab still running a version before 2.1 holds the database open, so it can't be upgraded */
+export class DatabaseBlockedError extends Error {
+  constructor() {
+    super("Pixel Mirror was updated: close other tabs that use the old version, then reload this page");
+    this.name = "DatabaseBlockedError";
+  }
+}
 
-// Database errors wrap the original error
+// Database errors keep the IndexedDB error as `cause`, so the console shows the root cause
 export class DatabaseError extends Error {
-  constructor(
-    message: string,
-    public readonly originalError?: unknown
-  ) {
-    super(message);
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
     this.name = "DatabaseError";
   }
 }
@@ -36,6 +37,11 @@ export class DatabaseError extends Error {
  * Normalize any error to an AppError structure
  */
 export function normalizeError(error: unknown, context?: string): AppError {
+  // Says what to do, which the wrapping "Failed to ..." message doesn't
+  if (error instanceof Error && error.cause instanceof DatabaseBlockedError) {
+    return { message: error.cause.message };
+  }
+
   const prefix = context ? `${context}: ` : "";
 
   if (error instanceof ValidationError) {

@@ -81,6 +81,17 @@ export function freePlacement(position: Position): Placement {
 }
 
 /**
+ * The placement after moving the mockup from `from` to `to`: only the axes it moved along
+ * become free offsets, so e.g. a vertical nudge keeps a horizontal centering
+ */
+export function moveAlongAxes(placement: Placement, from: Position, to: Position): Placement {
+  return {
+    x: to.x !== from.x ? { offset: to.x } : placement.x,
+    y: to.y !== from.y ? { offset: to.y } : placement.y
+  };
+}
+
+/**
  * Build a placement from the persisted settings: aligned axes follow the alignment,
  * the others use the stored position
  */
@@ -91,9 +102,10 @@ export function placementFromSettings(x: MockupAlignmentX, y: MockupAlignmentY, 
   };
 }
 
-/** Shown above the dock: the alignment (e.g. "top·center") or rounded coordinates */
+/** Shown above the dock: the alignment (e.g. "top·center"), rounded coordinates, or a mix ("center, y:420") */
 export function describePlacement(placement: Placement, position: Position): string {
-  const parts = [alignmentY(placement), alignmentX(placement)].filter(Boolean);
-  if (parts.length > 0) return parts.join("·");
-  return `x:${Math.round(position.x)}, y:${Math.round(position.y)}`;
+  const x = alignmentX(placement);
+  const y = alignmentY(placement);
+  if (x && y) return `${y}·${x}`;
+  return `${x ?? `x:${Math.round(position.x)}`}, ${y ?? `y:${Math.round(position.y)}`}`;
 }

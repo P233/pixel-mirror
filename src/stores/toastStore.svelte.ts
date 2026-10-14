@@ -10,7 +10,8 @@ function createToastStore() {
   const showError = (error: unknown, context?: string) => {
     const appError = normalizeError(error, context);
     currentMessage = appError.message;
-    console.error("[PixelMirror]", appError.message, appError.details ?? "");
+    // The original error carries the stack and `cause` chain the toast message leaves out
+    console.error("[PixelMirror]", appError.message, appError.details ?? "", error);
   };
 
   return {

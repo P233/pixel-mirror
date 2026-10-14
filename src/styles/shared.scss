@@ -16,8 +16,46 @@ $outline-width: 2px;
 }
 
 // Mixins
-@mixin focus-ring($size: $outline-width) {
-  box-shadow: 0 0 0 $size var(--focus-ring);
+// An outline with a gap, so the ring stays visible on accent-filled controls of the same color
+@mixin focus-ring($offset: 2px) {
+  outline: $outline-width solid var(--pm-focus-ring);
+  outline-offset: $offset;
+}
+
+// Bordered text input or select
+@mixin form-control {
+  height: rhythm(4);
+  padding: 0 rhythm(1.25);
+  font-family: var(--pm-font-mono);
+  font-size: 13px;
+  color: var(--pm-text-primary);
+  outline: none;
+  background: var(--pm-surface-elevated);
+  border: $border-width-sm solid var(--pm-border-control);
+  border-radius: var(--pm-radius-control);
+  transition:
+    border-color $transition-fast ease,
+    box-shadow $transition-fast ease;
+
+  // Prevents iOS Safari from zooming in on focus
+  @media (max-width: 680px) {
+    font-size: 16px;
+  }
+}
+
+// Bordered controls thicken their own border instead of drawing a separate ring
+@mixin form-control-focus {
+  border-color: var(--pm-focus-ring);
+  box-shadow: 0 0 0 1px var(--pm-focus-ring);
+}
+
+@mixin field-label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--pm-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 @mixin visually-hidden {
@@ -33,41 +71,53 @@ $outline-width: 2px;
 }
 
 @mixin manager-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
   height: 100%;
+  max-height: inherit;
   overflow: hidden;
 }
 
 @mixin manager-inner {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  padding: rhythm(2.5) rhythm(3);
   overflow: auto;
   overscroll-behavior: contain;
-  padding: rhythm(3) rhythm(3) rhythm(5);
 
   @media (max-width: 680px) {
-    padding: rhythm(2) rhythm(2) rhythm(4);
+    padding: rhythm(2);
   }
 }
 
 @mixin manager-footer {
-  position: absolute;
-  right: 0;
-  bottom: rhythm(-2.25);
-  left: 0;
-  z-index: 1;
   display: flex;
+  flex-shrink: 0;
   gap: rhythm(1);
   align-items: center;
-  width: max-content;
-  margin: auto;
+  justify-content: flex-end;
+  padding: rhythm(1.5) rhythm(3);
+  background: var(--pm-surface-subtle);
+  border-top: $border-width-sm solid var(--pm-border-subtle);
+
+  @media (max-width: 680px) {
+    padding: rhythm(1.5) rhythm(2);
+  }
 }
 
+// Primary (accent) button
 @mixin btn-base {
-  color: var(--btn-fg);
-  background: var(--btn-bg);
-  border-radius: rhythm(2);
+  color: var(--pm-button-fg);
+  background: var(--pm-button-bg);
+  border-radius: var(--pm-radius-control);
+  transition:
+    background $transition-fast ease,
+    color $transition-fast ease,
+    border-color $transition-fast ease;
 
   &:hover:not(:disabled) {
-    background: var(--btn-hover-bg);
+    background: var(--pm-button-hover-bg);
   }
 
   &:focus-visible {
@@ -76,31 +126,86 @@ $outline-width: 2px;
 
   &:disabled {
     cursor: not-allowed;
-    background: var(--btn-disabled-bg);
+    background: var(--pm-button-disabled-bg);
+    opacity: 0.55;
   }
 }
 
+// Secondary button: no fill, neutral border
+@mixin btn-ghost {
+  color: var(--pm-text-primary);
+  background: transparent;
+  border-color: var(--pm-border-strong);
+
+  &:hover:not(:disabled) {
+    background: var(--pm-surface-hover);
+  }
+}
+
+// Destructive confirmation
+@mixin btn-danger {
+  color: #fff;
+  background: var(--pm-danger);
+  border-color: transparent;
+
+  &:hover:not(:disabled) {
+    background: var(--pm-danger-hover);
+  }
+}
+
+// Round toolbar button holding one 20px icon; `.active` marks a pressed or open state
 @mixin icon-button {
-  padding: rhythm(0.75);
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  color: var(--pm-text-secondary);
+  border-radius: var(--pm-radius-pill);
+  transition:
+    background $transition-fast ease,
+    color $transition-fast ease;
+
+  // Touch screens keep :hover after a tap, which would leave the last tapped button highlighted
+  @media (hover: hover) {
+    &:hover:not(:disabled) {
+      color: var(--pm-text-primary);
+      background: var(--pm-surface-hover);
+    }
+  }
 
   &:focus-visible {
-    background: var(--focus-bg);
+    @include focus-ring;
+  }
+
+  // Also while hovered: popovers open on hover, so their trigger is usually under the pointer
+  &.active,
+  &.active:hover:not(:disabled) {
+    color: var(--pm-accent-text);
+    background: var(--pm-accent-subtle);
   }
 
   &:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.35;
   }
 }
 
 @mixin manager-footer-button {
   @include btn-base;
-  width: 160px;
-  font-size: 15px;
-  line-height: rhythm(4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  height: rhythm(4);
+  padding: 0 rhythm(2);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  border: $border-width-sm solid transparent;
 
   @media (max-width: 420px) {
-    width: 132px;
-    font-size: 14px;
+    padding: 0 rhythm(1.5);
   }
 }

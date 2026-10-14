@@ -3,10 +3,10 @@
 // ============================================
 
 const DEFAULT_GRID_TEMPLATE: Omit<LayoutGridConfig, "id" | "createdAt"> = {
-  width: "1140px",
+  width: "1044px",
   columns: 12,
   gutterWidth: "24px",
-  isGutterOnOutside: true,
+  isGutterOnOutside: false,
   position: "center"
 };
 
@@ -34,7 +34,7 @@ const OPACITY_DEFAULT = 0.5;
 const SCALE_OPTIONS = [0.5, 1] as const;
 const ZOOM_FACTOR = 2;
 
-// Pinch zoom range in solid mode (mobile)
+// Pinch zoom & custom scale range
 const PINCH_SCALE_MIN = 0.25;
 const PINCH_SCALE_MAX = 4;
 

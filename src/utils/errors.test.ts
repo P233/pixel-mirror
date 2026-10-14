@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DatabaseError, FileError, normalizeError, ValidationError } from "./errors";
+import { DatabaseBlockedError, DatabaseError, normalizeError, ValidationError } from "./errors";
 import type { AppError } from "./errors";
 
 describe("error utilities", () => {
@@ -20,40 +20,38 @@ describe("error utilities", () => {
     });
   });
 
-  describe("FileError", () => {
-    it("is an alias for ValidationError", () => {
-      const error = new FileError("File too large", "Max size is 10MB");
-      expect(error).toBeInstanceOf(ValidationError);
-      expect(error.name).toBe("ValidationError");
-      expect(error.message).toBe("File too large");
-      expect(error.details).toBe("Max size is 10MB");
-    });
-  });
-
   describe("DatabaseError", () => {
     it("creates error with message only", () => {
       const error = new DatabaseError("Failed to save");
       expect(error.message).toBe("Failed to save");
       expect(error.name).toBe("DatabaseError");
-      expect(error.originalError).toBeUndefined();
+      expect(error.cause).toBeUndefined();
       expect(error).toBeInstanceOf(Error);
       expect(error).toBeInstanceOf(DatabaseError);
     });
 
-    it("creates error with original error", () => {
+    it("keeps the original error as its cause", () => {
       const original = new Error("IndexedDB quota exceeded");
       const error = new DatabaseError("Failed to save", original);
       expect(error.message).toBe("Failed to save");
-      expect(error.originalError).toBe(original);
+      expect(error.cause).toBe(original);
     });
 
     it("preserves non-Error original errors", () => {
       const error = new DatabaseError("Failed", "string error");
-      expect(error.originalError).toBe("string error");
+      expect(error.cause).toBe("string error");
     });
   });
 
   describe("normalizeError", () => {
+    it("shows what to do when an older tab blocks the database upgrade", () => {
+      const error = new DatabaseError("Failed to load settings", new DatabaseBlockedError());
+
+      expect(normalizeError(error, "Failed to load dock settings")).toEqual({
+        message: "Pixel Mirror was updated: close other tabs that use the old version, then reload this page"
+      });
+    });
+
     it("normalizes ValidationError", () => {
       const error = new ValidationError("Invalid input", "details here");
       const result = normalizeError(error);

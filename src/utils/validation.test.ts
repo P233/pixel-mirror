@@ -7,7 +7,6 @@ import {
   validateFile,
   validateFiles,
   validateLayoutGridConfig,
-  validateNumberRange,
   validatePositiveInt
 } from "./validation";
 import { ValidationError } from "./errors";
@@ -142,39 +141,6 @@ describe("validation utilities", () => {
       if (!result.success) {
         expect(result.error.message).toContain("must be between");
       }
-    });
-  });
-
-  describe("validateNumberRange", () => {
-    it("validates number within range", () => {
-      const result = validateNumberRange(0.5, "Opacity", 0, 1);
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toBe(0.5);
-      }
-    });
-
-    it("validates boundary values", () => {
-      expect(validateNumberRange(0, "Value", 0, 1).success).toBe(true);
-      expect(validateNumberRange(1, "Value", 0, 1).success).toBe(true);
-    });
-
-    it("rejects NaN", () => {
-      const result = validateNumberRange(NaN, "Value", 0, 1);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.message).toContain("must be a number");
-      }
-    });
-
-    it("rejects value below minimum", () => {
-      const result = validateNumberRange(-0.1, "Opacity", 0, 1);
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects value above maximum", () => {
-      const result = validateNumberRange(1.1, "Opacity", 0, 1);
-      expect(result.success).toBe(false);
     });
   });
 

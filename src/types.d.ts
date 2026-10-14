@@ -56,7 +56,7 @@ interface LayoutGridConfig {
 
 interface DockSettings {
   position: DockPosition;
-  theme: Theme;
+  theme: Theme | null;
 }
 
 interface MockupOverlaySettings {

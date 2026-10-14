@@ -1,10 +1,8 @@
-import svelteSvg from "@poppanator/sveltekit-svg";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import cssnano from "cssnano";
 import path from "path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
-import { svgPluginOptions } from "./svg.config";
 
 /**
  * Vite plugin to remove data-testid attributes in production builds
@@ -30,7 +28,7 @@ export default defineConfig({
   server: {
     port: 3000
   },
-  plugins: [removeTestIds(), svelte(), svelteSvg(svgPluginOptions)],
+  plugins: [removeTestIds(), svelte()],
   css: {
     preprocessorOptions: {
       scss: {
@@ -60,6 +58,12 @@ export default defineConfig({
       name: "PixelMirror",
       formats: ["iife"],
       fileName: () => "index.js"
+    },
+    rolldownOptions: {
+      output: {
+        // Escape non-ASCII text: a classic script on a page without a UTF-8 charset is decoded as Latin-1
+        minify: { compress: true, mangle: true, codegen: { asciiOnly: true } }
+      }
     }
   }
 });

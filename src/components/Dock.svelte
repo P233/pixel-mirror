@@ -1,33 +1,36 @@
 <script lang="ts">
+  // Svelte
+  import { tick } from "svelte";
+  import { on } from "svelte/events";
+  // Constants
+  import { OPACITY_MAX, OPACITY_MIN } from "~/constants";
+  // Platform
+  import { isTypingInField } from "~/platform/typing";
   // Utils
-  import { isLastInputTouch, isTouchDevice } from "~/utils/device";
+  import { isLastInputTouch } from "~/utils/device";
   // Icons
-  import IconAlignBottom from "~/assets/align-bottom-stroke-rounded.svg?component";
-  import IconAlignCenterX from "~/assets/align-horizontal-center-stroke-rounded.svg?component";
-  import IconAlignLeft from "~/assets/align-left-stroke-rounded.svg?component";
-  import IconAlignRight from "~/assets/align-right-stroke-rounded.svg?component";
-  import IconAlignTop from "~/assets/align-top-stroke-rounded.svg?component";
-  import IconScale from "~/assets/border-all-02-stroke-rounded.svg?component";
-  import IconAlignment from "~/assets/coordinate-01-stroke-rounded.svg?component";
-  import IconSide from "~/assets/flip-top-stroke-rounded.svg?component";
-  import IconGridManager from "~/assets/grid-table-stroke-rounded.svg?component";
-  import IconOpacity from "~/assets/idea-01-stroke-rounded.svg?component";
-  import IconShow from "~/assets/image-02-stroke-rounded.svg?component";
-  import IconHide from "~/assets/image-not-found-01-stroke-rounded.svg?component";
-  import IconMockupManager from "~/assets/image-upload-stroke-rounded.svg?component";
-  import IconMoon from "~/assets/moon-02-stroke-rounded.svg?component";
-  import IconLock from "~/assets/square-lock-02-stroke-rounded.svg?component";
-  import IconUnlock from "~/assets/square-unlock-02-stroke-rounded.svg?component";
-  import IconSun from "~/assets/sun-03-stroke-rounded.svg?component";
+  import AlignmentIcon from "./icons/AlignmentIcon.svelte";
+  import Icon from "./icons/Icon.svelte";
+  import OpacityIcon from "./icons/OpacityIcon.svelte";
   // Stores
-  import { DOCK_TRANSITION_DURATION, dockStore } from "~/stores/dockStore.svelte";
+  import { dockStore } from "~/stores/dockStore.svelte";
   import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
   // Components
   import GridManager from "./GridManager.svelte";
   import MockupManager from "./MockupManager.svelte";
 
-  let showAlignmentOptions = $state(false);
+  const ALIGNMENT_Y_VALUES: NonNullable<MockupAlignmentY>[] = ["top", "bottom"];
+  const ALIGNMENT_X_VALUES: NonNullable<MockupAlignmentX>[] = ["left", "center", "right"];
+  const OPACITY_PRESETS = [0.25, 0.5, 0.75, OPACITY_MAX] as const;
+
+  type PopoverKind = "opacity" | "alignment";
+
+  let activePopover = $state<PopoverKind | null>(null);
+  let popoverAnchorX = $state<number | null>(null);
+  let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
   let dockElement: HTMLDivElement;
+  let opacityButtonEl: HTMLButtonElement;
+  let alignmentButtonEl: HTMLButtonElement;
 
   // Touch slide on the opacity button
   let opacitySliding = $state(false);
@@ -37,7 +40,8 @@
 
   // Derived values from mockupOverlayStore
   let opacityDisplay = $derived(Math.round(mockupOverlayStore.opacity * 100));
-  let scaleDisplay = $derived(mockupOverlayStore.scale === 0.5 ? ".5x" : `${mockupOverlayStore.scale}x`);
+  let scaleDisplay = $derived(mockupOverlayStore.scale === 0.5 ? "½×" : `${mockupOverlayStore.scale}×`);
+  let nextDockPosition = $derived<DockPosition>(dockStore.position === "top" ? "bottom" : "top");
 
   // Mockup disabled states
   let isMockupDisabled = $derived(!mockupOverlayStore.activeMockupId);
@@ -52,53 +56,121 @@
    */
   let isControlsDisabled = $derived(isMockupDisabled || isHidden);
 
-  let showPositionDisplay = $derived(dockStore.mode === "toolbar" && !showAlignmentOptions && !isControlsDisabled);
+  // Mutual exclusion states for floating windows/popovers
+  let isMockupsOpen = $derived(dockStore.mode === "mockups");
+  let isGridsOpen = $derived(dockStore.mode === "grids");
+  let isStudioOpen = $derived(isMockupsOpen || isGridsOpen);
+  let showOpacityPopover = $derived(activePopover === "opacity" && !isControlsDisabled && !isStudioOpen);
+  let showAlignmentOptions = $derived(
+    activePopover === "alignment" && !isControlsDisabled && !isLocked && !isStudioOpen
+  );
+
+  let showPositionDisplay = $derived(
+    dockStore.mode === "toolbar" && !showAlignmentOptions && !showOpacityPopover && !isControlsDisabled
+  );
+
+  function cancelPopoverClose() {
+    if (hoverCloseTimer !== null) {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = null;
+    }
+  }
+
+  function updatePopoverAnchor(kind: PopoverKind) {
+    const triggerEl = kind === "opacity" ? opacityButtonEl : alignmentButtonEl;
+    if (!triggerEl || !dockElement) {
+      popoverAnchorX = null;
+      return;
+    }
+    const dockRect = dockElement.getBoundingClientRect();
+    const btnRect = triggerEl.getBoundingClientRect();
+    if (dockRect.width > 0 && btnRect.width > 0) {
+      popoverAnchorX = btnRect.left - dockRect.left + btnRect.width / 2;
+    } else if (triggerEl.offsetWidth > 0) {
+      popoverAnchorX = triggerEl.offsetLeft + triggerEl.offsetWidth / 2;
+    } else {
+      popoverAnchorX = null;
+    }
+  }
+
+  function openPopover(kind: PopoverKind) {
+    cancelPopoverClose();
+    updatePopoverAnchor(kind);
+    activePopover = kind;
+  }
+
+  function closePopover() {
+    cancelPopoverClose();
+    activePopover = null;
+  }
+
+  function handlePopoverMouseLeave(kind: PopoverKind, e: MouseEvent) {
+    if (isLastInputTouch() || activePopover !== kind) return;
+
+    const triggerSelector = kind === "opacity" ? ".opacity-button" : ".alignment-trigger-btn";
+    const popoverSelector = kind === "opacity" ? ".dock__popover--opacity" : ".dock__popover--placement";
+    const target = e.relatedTarget as Element | null;
+
+    if (target?.closest(popoverSelector) || target?.closest(triggerSelector)) {
+      cancelPopoverClose();
+      return;
+    }
+
+    // If the pointer is still moving inside the dock (e.g. crossing toolbar padding toward the popover),
+    // wait briefly before closing so moving onto the popover cancels the close
+    if (target && dockElement?.contains(target)) {
+      cancelPopoverClose();
+      hoverCloseTimer = setTimeout(() => {
+        hoverCloseTimer = null;
+        if (activePopover === kind) {
+          activePopover = null;
+        }
+      }, 140);
+      return;
+    }
+
+    closePopover();
+  }
 
   function handleAlignmentMouseEnter() {
-    // Skip hover behavior if last input was touch (prevents accidental activation on hybrid devices)
-    if (isLastInputTouch()) return;
-    if (isDragging) return;
-    showAlignmentOptions = true;
+    if (isLastInputTouch() || isDragging || isStudioOpen) return;
+    openPopover("alignment");
   }
 
   function handleAlignmentMouseLeave(e: MouseEvent) {
-    // Skip if last input was touch
-    if (isLastInputTouch()) return;
-
-    const target = e.relatedTarget as Element | null;
-    const isRelatedToAlignment = target?.closest(".dock__popover") || target?.closest(".alignment-trigger-btn");
-
-    if (!isRelatedToAlignment) {
-      showAlignmentOptions = false;
-    }
+    handlePopoverMouseLeave("alignment", e);
   }
 
-  // ============================================
-  // Mobile Touch Handlers
-  // ============================================
-
   /**
-   * Handle alignment button click - three-stage cycle:
-   * 1. If popover is closed: open popover
-   * 2. If popover is open AND alignment is NOT top-center: set to top-center
-   * 3. If popover is open AND alignment IS top-center: close popover
-   *
-   * This behavior is consistent for both desktop and mobile.
-   * Desktop can also open popover via hover.
+   * A click restores the default alignment (top center); the matrix opens on hover.
+   * Touch has no hover, so the first tap opens the matrix. Keyboard activation opens it with
+   * focus inside, so every position stays reachable.
    */
-  function handleAlignmentClick() {
-    const isTopCenter = mockupOverlayStore.alignmentY === "top" && mockupOverlayStore.alignmentX === "center";
-
-    if (!showAlignmentOptions) {
-      // Stage 1: Open popover
-      showAlignmentOptions = true;
-    } else if (!isTopCenter) {
-      // Stage 2: Set to top-center (popover stays open)
-      mockupOverlayStore.setAlignment("top", "center");
-    } else {
-      // Stage 3: Already at top-center, close popover
-      showAlignmentOptions = false;
+  async function handleAlignmentClick(e: MouseEvent) {
+    // detail is 0 for keyboard activation, which has no pointer
+    if (e.detail === 0) {
+      openPopover("alignment");
+      await tick();
+      const dots = dockElement.querySelectorAll<HTMLButtonElement>(".alignment-matrix__dot");
+      (Array.from(dots).find((dot) => dot.classList.contains("active")) ?? dots[0])?.focus();
+      return;
     }
+
+    if (isLastInputTouch() && activePopover !== "alignment") {
+      openPopover("alignment");
+      return;
+    }
+
+    mockupOverlayStore.setAlignment("top", "center");
+  }
+
+  function handleOpacityMouseEnter() {
+    if (isLastInputTouch() || isDragging || isStudioOpen) return;
+    openPopover("opacity");
+  }
+
+  function handleOpacityMouseLeave(e: MouseEvent) {
+    handlePopoverMouseLeave("opacity", e);
   }
 
   /**
@@ -129,220 +201,296 @@
    * Mouse and keyboard reset the opacity; a touch tap doesn't, since touch is for sliding
    */
   function handleOpacityClick(e: MouseEvent) {
+    if (isStudioOpen) return;
     // detail is 0 for keyboard activation, which has no pointerdown
     if (e.detail !== 0 && opacityPointerType === "touch") return;
     mockupOverlayStore.resetOpacity();
   }
 
-  // Effect to close alignment popover when clicking outside the dock on mobile
+  function handleMockupStudioClick() {
+    if (isGridsOpen) return;
+    closePopover();
+    if (dockStore.mode === "mockups") {
+      dockStore.enterToolbar();
+    } else {
+      dockStore.enterMockups();
+    }
+  }
+
+  function handleGridStudioClick() {
+    if (isMockupsOpen) return;
+    closePopover();
+    if (dockStore.mode === "grids") {
+      dockStore.enterToolbar();
+    } else {
+      dockStore.enterGrids();
+    }
+  }
+
+  // Reset popover state if underlying controls become disabled or locked
   $effect(() => {
-    if (!isTouchDevice() || !showAlignmentOptions) return;
-
-    const handleOutsideDock = (e: Event) => {
-      const path = e.composedPath();
-      // Close only if clicking outside the entire dock
-      if (!path.includes(dockElement)) {
-        showAlignmentOptions = false;
-      }
-    };
-
-    // Use setTimeout to avoid closing immediately on the same tap that opened it
-    const timer = setTimeout(() => {
-      window.addEventListener("touchend", handleOutsideDock);
-    }, 0);
-
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener("touchend", handleOutsideDock);
-    };
+    if (isControlsDisabled || isStudioOpen || (activePopover === "alignment" && isLocked)) {
+      closePopover();
+    }
   });
 
+  // Close popovers on Escape, or on a tap/click outside the dock (touch has no mouseleave)
+  $effect(() => {
+    if (!showAlignmentOptions && !showOpacityPopover) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // A hover popover may be open while the user types in a host field; Escape belongs to that field
+      const focused = (dockElement.getRootNode() as Document | ShadowRoot).activeElement;
+      const isFocusInDock = !!focused && dockElement.contains(focused);
+      if (!isFocusInDock && isTypingInField(e)) return;
+
+      // Marks the key as handled, so the Escape lock shortcut skips it
+      e.preventDefault();
+      const trigger = activePopover === "opacity" ? opacityButtonEl : alignmentButtonEl;
+      closePopover();
+      if (focused?.closest(".dock__popover")) trigger.focus();
+    };
+
+    const handlePointerDownOutside = (e: PointerEvent) => {
+      if (!e.composedPath().includes(dockElement)) closePopover();
+    };
+
+    const stops = [
+      on(window, "keydown", handleEscape, { capture: true }),
+      on(window, "pointerdown", handlePointerDownOutside)
+    ];
+    return () => stops.forEach((stop) => stop());
+  });
+
+  // Effect to close studio panel when clicking outside the dock
   $effect(() => {
     if (!dockStore.isManagerMode) return;
 
-    const showTimer = setTimeout(() => {
-      dockStore.managerVisible = true;
-    }, DOCK_TRANSITION_DURATION);
-
     const handleClickOutside = (e: MouseEvent) => {
-      const path = e.composedPath();
-      if (!path.includes(dockElement)) {
+      if (!e.composedPath().includes(dockElement)) {
         dockStore.enterToolbar();
       }
     };
 
+    let stop: (() => void) | null = null;
     const listenerTimer = setTimeout(() => {
-      window.addEventListener("click", handleClickOutside);
+      stop = on(window, "click", handleClickOutside);
     }, 0);
 
     return () => {
-      clearTimeout(showTimer);
       clearTimeout(listenerTimer);
-      window.removeEventListener("click", handleClickOutside);
+      stop?.();
     };
   });
+
+  $effect(() => () => cancelPopoverClose());
 </script>
 
 <div
   bind:this={dockElement}
   class="dock"
   class:at-top={dockStore.position === "top"}
-  class:is-manager={dockStore.isManagerMode}
   class:is-dragging={isDragging}
-  style:--transition-duration="{DOCK_TRANSITION_DURATION}ms"
-  style:width="{dockStore.size.width}px"
-  style:height="{dockStore.size.height}px"
   hidden={!dockStore.initialized || mockupOverlayStore.isSolidOrZoomed}
 >
-  {#if dockStore.mode === "toolbar" && dockStore.toolbarVisible}
-    <div class="toolbar">
-      <button
-        class="icon-button"
-        data-testid="btn-visibility"
-        disabled={isMockupDisabled}
-        onclick={mockupOverlayStore.toggleVisibility}
-        title={isHidden ? "Show mockup" : "Hide mockup"}
-      >
-        {#if isHidden}
-          <IconHide />
-        {:else}
-          <IconShow />
-        {/if}
-      </button>
-      <button
-        class="icon-button"
-        data-testid="btn-lock"
-        disabled={isControlsDisabled}
-        onclick={() => mockupOverlayStore.toggleLock()}
-        title={isLocked ? "Unlock mockup position" : "Lock mockup position"}
-      >
-        {#if isLocked}
-          <IconLock />
-        {:else}
-          <IconUnlock />
-        {/if}
-      </button>
-      <button
-        class="icon-button opacity-button"
-        class:sliding={opacitySliding}
-        data-testid="btn-opacity"
-        disabled={isControlsDisabled}
-        style:touch-action="none"
-        onclick={handleOpacityClick}
-        onpointerdown={handleOpacityPointerDown}
-        onpointermove={handleOpacityPointerMove}
-        onpointerup={handleOpacityPointerEnd}
-        onpointercancel={handleOpacityPointerEnd}
-        title="Opacity (Click to reset, Ctrl+Scroll to adjust)"
-      >
-        <IconOpacity />
-        <span class="opacity-button__value">{opacityDisplay}</span>
-      </button>
-      <button
-        class="icon-button alignment-trigger-btn"
-        data-testid="btn-alignment"
-        disabled={isControlsDisabled || isLocked}
-        onmouseenter={handleAlignmentMouseEnter}
-        onmouseleave={handleAlignmentMouseLeave}
-        onclick={handleAlignmentClick}
-        title="Alignment (Click for top-center)"
-      >
-        <IconAlignment />
-      </button>
-      <button
-        class="icon-button scale-button"
-        data-testid="btn-scale"
-        disabled={isControlsDisabled || isLocked}
-        onclick={mockupOverlayStore.cycleScale}
-        title="Scale (1x ↔ 0.5x)"
-      >
-        <IconScale />
-        <span class="scale-button__value">{scaleDisplay}</span>
-      </button>
-      <button
-        class="icon-button"
-        data-testid="btn-mockup-manager"
-        onclick={dockStore.enterMockups}
-        title="Mockup Manager"
-      >
-        <IconMockupManager />
-      </button>
-      <button class="icon-button" data-testid="btn-grid-manager" onclick={dockStore.enterGrids} title="Grid Manager">
-        <IconGridManager />
-      </button>
-      <button class="icon-button" data-testid="btn-theme" onclick={dockStore.toggleTheme} title="Toggle theme">
-        {#if dockStore.theme === "dark"}
-          <IconSun />
-        {:else}
-          <IconMoon />
-        {/if}
-      </button>
-      <button
-        class="icon-button"
-        class:flip={dockStore.position === "top"}
-        data-testid="btn-position"
-        onclick={dockStore.togglePosition}
-        title="Toggle dock position"
-      >
-        <IconSide />
-      </button>
-    </div>
+  <div class="toolbar" role="toolbar" aria-label="Pixel Mirror controls">
+    <button
+      class="icon-button"
+      data-testid="btn-visibility"
+      disabled={isMockupDisabled || isStudioOpen}
+      onclick={mockupOverlayStore.toggleVisibility}
+      title={isHidden ? "Show mockup" : "Hide mockup"}
+    >
+      <Icon name={isHidden ? "hide" : "show"} />
+    </button>
+    <button
+      class="icon-button"
+      class:active={isLocked && !isControlsDisabled}
+      data-testid="btn-lock"
+      disabled={isControlsDisabled || isStudioOpen}
+      aria-pressed={isLocked}
+      aria-label="Lock mockup position"
+      onclick={() => mockupOverlayStore.toggleLock()}
+      title={isLocked ? "Unlock mockup position (Click-through active)" : "Lock mockup position (Enable click-through)"}
+    >
+      <Icon name={isLocked ? "lock" : "unlock"} />
+    </button>
 
-    {#if showAlignmentOptions && !isControlsDisabled && !isLocked}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="dock__popover" onmouseleave={handleAlignmentMouseLeave}>
-        <div class="alignment-group alignment-group--vertical">
+    <span class="toolbar__divider" aria-hidden="true"></span>
+
+    <button
+      bind:this={opacityButtonEl}
+      class="icon-button opacity-button"
+      class:sliding={opacitySliding}
+      class:active={showOpacityPopover}
+      data-testid="btn-opacity"
+      disabled={isControlsDisabled || isStudioOpen}
+      aria-expanded={showOpacityPopover}
+      aria-label="Opacity {opacityDisplay}%"
+      style:touch-action="none"
+      onclick={handleOpacityClick}
+      onpointerdown={handleOpacityPointerDown}
+      onpointermove={handleOpacityPointerMove}
+      onpointerup={handleOpacityPointerEnd}
+      onpointercancel={handleOpacityPointerEnd}
+      onmouseenter={handleOpacityMouseEnter}
+      onmouseleave={handleOpacityMouseLeave}
+      title="Opacity (Click to reset, hover or Ctrl+Scroll to adjust)"
+    >
+      <OpacityIcon level={mockupOverlayStore.opacity} />
+    </button>
+
+    <span class="toolbar__divider" aria-hidden="true"></span>
+
+    <button
+      bind:this={alignmentButtonEl}
+      class="icon-button alignment-trigger-btn"
+      class:active={showAlignmentOptions}
+      data-testid="btn-alignment"
+      disabled={isControlsDisabled || isLocked || isStudioOpen}
+      aria-expanded={showAlignmentOptions}
+      onclick={handleAlignmentClick}
+      onmouseenter={handleAlignmentMouseEnter}
+      onmouseleave={handleAlignmentMouseLeave}
+      aria-label="Alignment"
+      title="Alignment (click for top center)"
+    >
+      <AlignmentIcon x={mockupOverlayStore.alignmentX} y={mockupOverlayStore.alignmentY} />
+    </button>
+    <button
+      class="icon-button scale-button"
+      data-testid="btn-scale"
+      disabled={isControlsDisabled || isLocked || isStudioOpen}
+      onclick={mockupOverlayStore.cycleScale}
+      aria-label="Scale {mockupOverlayStore.scale}x"
+      title="Scale (1× ↔ ½×)"
+    >
+      <span class="scale-button__value">{scaleDisplay}</span>
+    </button>
+
+    <span class="toolbar__divider" aria-hidden="true"></span>
+
+    <button
+      class="icon-button"
+      class:active={isMockupsOpen}
+      aria-pressed={isMockupsOpen}
+      data-testid="btn-mockup-manager"
+      disabled={isGridsOpen}
+      onclick={handleMockupStudioClick}
+      title="Mockup Studio"
+    >
+      <Icon name="mockups" />
+    </button>
+    <button
+      class="icon-button"
+      class:active={isGridsOpen}
+      aria-pressed={isGridsOpen}
+      data-testid="btn-grid-manager"
+      disabled={isMockupsOpen}
+      onclick={handleGridStudioClick}
+      title="Grid Studio"
+    >
+      <Icon name="grids" />
+    </button>
+
+    <span class="toolbar__divider" aria-hidden="true"></span>
+
+    <button class="icon-button" data-testid="btn-theme" onclick={dockStore.toggleTheme} title="Toggle theme">
+      <Icon name={dockStore.theme === "dark" ? "sun" : "moon"} />
+    </button>
+    <button
+      class="icon-button"
+      data-testid="btn-position"
+      onclick={dockStore.togglePosition}
+      title="Move toolbar to the {nextDockPosition}"
+    >
+      <Icon name={nextDockPosition === "top" ? "dockTop" : "dockBottom"} />
+    </button>
+  </div>
+
+  {#if showOpacityPopover}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="dock__popover dock__popover--opacity"
+      data-testid="popover-opacity"
+      style:left={popoverAnchorX !== null ? `${popoverAnchorX}px` : undefined}
+      onmouseenter={cancelPopoverClose}
+      onmouseleave={handleOpacityMouseLeave}
+    >
+      <div class="popover-section">
+        <div class="popover-section__header">
+          <span class="popover-section__label">Opacity</span>
           <button
-            class="alignment-button"
-            class:active={mockupOverlayStore.alignmentY === "top"}
-            onclick={() => mockupOverlayStore.setAlignmentY("top")}
-            title="Align top"
+            type="button"
+            class="popover-section__reset"
+            data-testid="btn-opacity-reset"
+            onclick={() => mockupOverlayStore.resetOpacity()}
+            title="Reset opacity to 50%"
           >
-            <IconAlignTop />
-          </button>
-          <button
-            class="alignment-button"
-            class:active={mockupOverlayStore.alignmentY === "bottom"}
-            onclick={() => mockupOverlayStore.setAlignmentY("bottom")}
-            title="Align bottom"
-          >
-            <IconAlignBottom />
+            {opacityDisplay}% · Reset
           </button>
         </div>
-        <div class="alignment-group alignment-group--horizontal">
-          <button
-            class="alignment-button"
-            class:active={mockupOverlayStore.alignmentX === "left"}
-            onclick={() => mockupOverlayStore.setAlignmentX("left")}
-            title="Align left"
-          >
-            <IconAlignLeft />
-          </button>
-          <button
-            class="alignment-button"
-            class:active={mockupOverlayStore.alignmentX === "center"}
-            onclick={() => mockupOverlayStore.setAlignmentX("center")}
-            title="Align center horizontally"
-          >
-            <IconAlignCenterX />
-          </button>
-          <button
-            class="alignment-button"
-            class:active={mockupOverlayStore.alignmentX === "right"}
-            onclick={() => mockupOverlayStore.setAlignmentX("right")}
-            title="Align right"
-          >
-            <IconAlignRight />
-          </button>
+        <input
+          type="range"
+          class="opacity-slider"
+          data-testid="slider-opacity"
+          min={OPACITY_MIN * 100}
+          max={OPACITY_MAX * 100}
+          step="5"
+          value={opacityDisplay}
+          oninput={(e) => mockupOverlayStore.setOpacity(Number((e.currentTarget as HTMLInputElement).value) / 100)}
+        />
+        <div class="chip-row">
+          {#each OPACITY_PRESETS as preset (preset)}
+            <button
+              type="button"
+              class="chip"
+              class:active={Math.abs(mockupOverlayStore.opacity - preset) < 0.03}
+              onclick={() => mockupOverlayStore.setOpacity(preset)}
+            >
+              {Math.round(preset * 100)}%
+            </button>
+          {/each}
         </div>
       </div>
-    {/if}
-  {:else if dockStore.mode === "mockups" && dockStore.managerVisible}
-    <div class="manager-wrapper">
+    </div>
+  {/if}
+
+  {#if showAlignmentOptions}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="dock__popover dock__popover--placement"
+      style:left={popoverAnchorX !== null ? `${popoverAnchorX}px` : undefined}
+      onmouseenter={cancelPopoverClose}
+      onmouseleave={handleAlignmentMouseLeave}
+    >
+      <div class="alignment-matrix" role="group" aria-label="2x3 alignment matrix">
+        {#each ALIGNMENT_Y_VALUES as y (y)}
+          {#each ALIGNMENT_X_VALUES as x (`${y}-${x}`)}
+            <button
+              type="button"
+              class="alignment-matrix__dot"
+              class:active={mockupOverlayStore.alignmentY === y && mockupOverlayStore.alignmentX === x}
+              data-testid="matrix-{y}-{x}"
+              onclick={() => mockupOverlayStore.setAlignment(y, x)}
+              title="Snap {y} {x}"
+              aria-label="Snap {y} {x}"
+            >
+              <span></span>
+            </button>
+          {/each}
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#if dockStore.mode === "mockups"}
+    <div class="manager-wrapper dock__panel dock__panel--mockups">
       <MockupManager />
     </div>
-  {:else if dockStore.mode === "grids" && dockStore.managerVisible}
-    <div class="manager-wrapper">
+  {:else if dockStore.mode === "grids"}
+    <div class="manager-wrapper dock__panel dock__panel--grids">
       <GridManager />
     </div>
   {/if}
@@ -352,39 +500,42 @@
   {/if}
 </div>
 
+{#if dockStore.initialized && mockupOverlayStore.isSolidOrZoomed}
+  <div class="inspect-hud" class:at-top={dockStore.position === "top"} data-testid="inspect-hud">
+    <span class="inspect-hud__badge">
+      {mockupOverlayStore.mode === "zoomed" ? "200% Zoom" : "100% Solid"}
+    </span>
+    <span class="inspect-hud__coords">{mockupOverlayStore.positionDisplay}</span>
+  </div>
+{/if}
+
 <style lang="scss">
   .dock {
     position: fixed;
-    right: rhythm(1);
+    right: rhythm(1.5);
     bottom: rhythm(3);
-    left: rhythm(1);
+    left: rhythm(1.5);
     z-index: $max-z-index;
     display: flex;
     align-items: center;
     justify-content: center;
-    max-width: calc(100vw - #{rhythm(2)});
-    max-height: 75vh;
+    width: max-content;
+    max-width: calc(100vw - #{rhythm(3)});
     margin-right: auto;
     margin-left: auto;
-    font-family: "Arial", sans-serif;
-    color: var(--dock-fg);
-    outline: $outline-width solid var(--dock-outline);
-    background: var(--dock-bg);
-    border: $border-width-md solid var(--dock-border);
-    border-radius: rhythm(4);
+    font-family: var(--pm-font-sans);
+    color: var(--pm-text-primary);
+    background: var(--pm-surface-primary);
+    border: $border-width-sm solid var(--pm-border-strong);
+    border-radius: var(--pm-radius-pill);
+    box-shadow: var(--pm-shadow-hud);
+    backdrop-filter: var(--pm-backdrop-blur);
     transform: translateZ(0);
-    transition:
-      width var(--transition-duration) $timing-function,
-      height var(--transition-duration) $timing-function,
-      border-radius var(--transition-duration) $timing-function;
-    will-change: width, height, border-radius;
 
     &[hidden] {
       display: none !important;
     }
 
-    // Prevent pinch zoom and text selection on dock elements
-    // touch-action is NOT inherited, so mustbe set on each element
     &,
     * {
       touch-action: pan-x pan-y;
@@ -392,7 +543,7 @@
     }
 
     &.at-top {
-      top: rhythm(5);
+      top: rhythm(3);
       bottom: auto;
     }
 
@@ -407,46 +558,114 @@
       left: 0;
       z-index: 1;
       width: max-content;
-      padding: 0 rhythm(1);
+      padding: 3px rhythm(1.25);
       margin: auto;
-      font-family: monospace;
-      font-size: 12px;
-      line-height: 20px;
-      color: var(--btn-fg);
+      font-family: var(--pm-font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      line-height: 16px;
+      color: var(--pm-text-secondary);
       white-space: nowrap;
-      background: var(--btn-bg);
-      border-radius: rhythm(2);
+      pointer-events: none;
+      background: var(--pm-surface-primary);
+      border: $border-width-sm solid var(--pm-border-subtle);
+      border-radius: var(--pm-radius-pill);
+      box-shadow: var(--pm-shadow-hud);
+      backdrop-filter: var(--pm-backdrop-blur);
+    }
+
+    &.at-top &__coordinates {
+      top: calc(100% + 8px);
+      bottom: auto;
     }
 
     &__popover {
       position: absolute;
-      bottom: 100%;
-      left: 74px;
-      z-index: 2;
+      bottom: calc(100% + 10px);
+      left: 50%;
+      z-index: 3;
       display: flex;
-      align-items: center;
-      padding: rhythm(0.5) rhythm(0.5) 0;
-      overflow: hidden;
-      background: var(--dock-bg);
-      border: $border-width-md solid var(--dock-border);
-      border-bottom: none;
-      border-radius: rhythm(1.5) rhythm(1.5) 0 0;
-    }
-  }
+      flex-direction: column;
+      gap: rhythm(1);
+      width: max-content;
+      padding: rhythm(1.5);
+      background: var(--pm-surface-elevated);
+      border: $border-width-sm solid var(--pm-border-strong);
+      border-radius: var(--pm-radius-card);
+      box-shadow: var(--pm-shadow-panel);
+      transform: translateX(-50%);
+      animation: popover-in 0.16s $timing-function;
 
-  .toolbar,
-  .dock__popover {
-    :global(button:focus) {
-      outline: none;
+      &--opacity {
+        min-width: 232px;
+      }
+
+      &--placement {
+        padding: rhythm(1);
+      }
+
+      // Invisible hover bridge spanning the gap down to the toolbar buttons
+      &::after {
+        position: absolute;
+        right: 0;
+        bottom: -18px;
+        left: 0;
+        height: 18px;
+        content: "";
+      }
+    }
+
+    &.at-top &__popover {
+      top: calc(100% + 10px);
+      bottom: auto;
+
+      &::after {
+        top: -18px;
+        bottom: auto;
+      }
+    }
+
+    &__panel {
+      position: absolute;
+      bottom: calc(100% + 12px);
+      left: 50%;
+      z-index: 4;
+      max-width: calc(100vw - #{rhythm(3)});
+      max-height: min(68vh, 560px);
+      overflow: hidden;
+      background: var(--pm-surface-elevated);
+      border: $border-width-sm solid var(--pm-border-strong);
+      border-radius: var(--pm-radius-panel);
+      box-shadow: var(--pm-shadow-panel);
+      transform: translateX(-50%);
+      animation: popover-in 0.18s $timing-function;
+
+      // Both panels are sized by their content, up to the max-height above
+
+      &--mockups {
+        width: min(820px, calc(100vw - #{rhythm(3)}));
+      }
+
+      &--grids {
+        width: min(648px, calc(100vw - #{rhythm(3)}));
+      }
+    }
+
+    &.at-top &__panel {
+      top: calc(100% + 12px);
+      bottom: auto;
     }
   }
 
   .toolbar {
     display: flex;
     flex-shrink: 0;
+    gap: 2px;
     align-items: center;
     max-width: 100%;
-    padding: 0 rhythm(1);
+    // Inside the scroll container, so the buttons' focus rings aren't clipped
+    padding: 4px;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     -ms-overflow-style: none;
@@ -455,135 +674,230 @@
     &::-webkit-scrollbar {
       display: none;
     }
+
+    &__divider {
+      flex: none;
+      width: 1px;
+      height: 20px;
+      margin: 0 rhythm(0.5);
+      background: var(--pm-border-strong);
+    }
+
+    // Phones: drop the dividers and gaps so all buttons fit in 360px
+    @media (max-width: 420px) {
+      gap: 0;
+
+      &__divider {
+        display: none;
+      }
+    }
   }
 
   .icon-button {
     @include icon-button;
-
-    &.flip {
-      transform: rotate(180deg);
-
-      &:active {
-        transform: scale(0.95) rotate(180deg);
-      }
-    }
   }
 
-  .opacity-button {
-    position: relative;
-
-    &.sliding {
-      background: var(--focus-bg);
-      opacity: 1;
-    }
-
-    &__value {
-      position: absolute;
-      top: 14px;
-      right: 0;
-      left: 0;
-      z-index: 1;
-      font-size: 8px;
-      font-weight: 700;
-      line-height: 12px;
-      text-align: center;
-    }
+  .opacity-button.sliding {
+    color: var(--pm-accent-text);
+    background: var(--pm-accent-subtle);
   }
 
-  .scale-button {
-    position: relative;
-
-    &__value {
-      position: absolute;
-      inset: 0;
-      z-index: 1;
-      height: 16px;
-      margin: auto;
-      font-size: 11.5px;
-      font-weight: 700;
-      line-height: 16px;
-      text-align: center;
-    }
+  .scale-button__value {
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 20px;
   }
 
-  .alignment-group {
+  .popover-section {
     display: flex;
-    align-items: center;
-    padding: 2px;
-    border-radius: rhythm(0.75);
+    flex-direction: column;
+    gap: rhythm(1.25);
 
-    + .alignment-group {
-      margin-left: rhythm(0.5);
+    &__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
 
-    &--vertical {
-      background: var(--align-y-bg);
+    &__label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--pm-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
 
-      .alignment-button {
-        &:hover {
-          background: var(--align-y-hover);
-        }
+    &__reset {
+      padding: 2px 6px;
+      font-size: 12px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--pm-accent-text);
+      border-radius: 6px;
+      transition: background $transition-fast ease;
 
-        &:active,
-        &.active {
-          background: var(--align-y-active);
-        }
+      &:hover {
+        background: var(--pm-accent-subtle);
       }
-    }
 
-    &--horizontal {
-      background: var(--align-x-bg);
-
-      .alignment-button {
-        &:hover {
-          background: var(--align-x-hover);
-        }
-
-        &:active,
-        &.active {
-          background: var(--align-x-active);
-        }
+      &:focus-visible {
+        @include focus-ring;
       }
     }
   }
 
-  .alignment-button {
-    padding: 2px;
-    border-radius: rhythm(0.75);
+  .opacity-slider {
+    width: 100%;
+    margin: 0;
+    accent-color: var(--pm-accent);
+    cursor: pointer;
 
     &:focus-visible {
-      @include focus-ring($border-width-md);
-    }
-
-    :global(> svg) {
-      width: 24px;
-      height: 24px;
+      @include focus-ring;
+      border-radius: var(--pm-radius-pill);
     }
   }
 
-  .manager-wrapper {
-    width: 100%;
-    height: 100%;
+  .chip-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
 
-    :global(.inner) {
-      animation: fadeIn $transition-fast $timing-function;
+  .chip {
+    height: 28px;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--pm-text-secondary);
+    border: $border-width-sm solid var(--pm-border-strong);
+    border-radius: 6px;
+    transition:
+      background $transition-fast ease,
+      color $transition-fast ease,
+      border-color $transition-fast ease;
+
+    &:hover {
+      color: var(--pm-text-primary);
+      background: var(--pm-surface-hover);
+    }
+
+    &:focus-visible {
+      @include focus-ring;
+    }
+
+    &.active {
+      color: var(--pm-accent-text);
+      background: var(--pm-accent-subtle);
+      border-color: transparent;
     }
   }
 
-  @keyframes fadeIn {
+  .alignment-matrix {
+    display: grid;
+    grid-template-rows: repeat(2, 28px);
+    grid-template-columns: repeat(3, 36px);
+    gap: 4px;
+
+    &__dot {
+      display: grid;
+      place-items: center;
+      width: 100%;
+      height: 100%;
+      background: var(--pm-surface-subtle);
+      border-radius: 6px;
+      transition: background $transition-fast ease;
+
+      span {
+        width: 6px;
+        height: 6px;
+        background: var(--pm-text-muted);
+        border-radius: 50%;
+        transition:
+          transform $transition-fast ease,
+          background $transition-fast ease;
+      }
+
+      &:hover {
+        background: var(--pm-surface-active);
+
+        span {
+          background: var(--pm-text-primary);
+          transform: scale(1.3);
+        }
+      }
+
+      &:focus-visible {
+        @include focus-ring;
+      }
+
+      &.active {
+        background: var(--pm-accent-subtle);
+
+        span {
+          background: var(--pm-accent);
+          transform: scale(1.5);
+        }
+      }
+    }
+  }
+
+  // Display only: clicks under it still reach the mockup (e.g. to toggle zoom)
+  .inspect-hud {
+    position: fixed;
+    right: 0;
+    bottom: rhythm(3);
+    left: 0;
+    z-index: $max-z-index;
+    display: flex;
+    gap: rhythm(1.25);
+    align-items: center;
+    width: max-content;
+    height: 40px;
+    padding: 0 rhythm(1.75) 0 6px;
+    margin: auto;
+    font-family: var(--pm-font-sans);
+    font-size: 12px;
+    color: var(--pm-text-primary);
+    pointer-events: none;
+    background: var(--pm-surface-primary);
+    border: $border-width-sm solid var(--pm-border-strong);
+    border-radius: var(--pm-radius-pill);
+    box-shadow: var(--pm-shadow-hud);
+    backdrop-filter: var(--pm-backdrop-blur);
+
+    &.at-top {
+      top: rhythm(3);
+      bottom: auto;
+    }
+
+    &__badge {
+      padding: 4px 10px;
+      font-weight: 600;
+      line-height: 16px;
+      color: var(--pm-accent-fg);
+      background: var(--pm-accent);
+      border-radius: var(--pm-radius-pill);
+    }
+
+    &__coords {
+      font-family: var(--pm-font-mono);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      color: var(--pm-text-secondary);
+    }
+  }
+
+  @keyframes popover-in {
     from {
       opacity: 0;
+      transform: translateX(-50%) translateY(4px) scale(0.98);
     }
 
     to {
       opacity: 1;
-    }
-  }
-
-  // Mobile responsive styles - reduce border radius when manager is open
-  @media (max-width: 680px) {
-    .dock.is-manager {
-      border-radius: rhythm(3);
+      transform: translateX(-50%) translateY(0) scale(1);
     }
   }
 </style>

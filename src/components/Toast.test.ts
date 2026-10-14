@@ -7,11 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Toast from "./Toast.svelte";
 import { toastStore } from "~/stores/toastStore.svelte";
 
-// Mock the SVG component
-vi.mock("~/assets/alert-02-stroke-rounded.svg?component", () => ({
-  default: function IconWarning() {}
-}));
-
 // Mock the toast store
 vi.mock("~/stores/toastStore.svelte", () => ({
   toastStore: {
@@ -83,6 +78,19 @@ describe("Toast component", () => {
       const { container } = render(Toast);
 
       expect(container.querySelector(".toast__message")).toBeInTheDocument();
+    });
+
+    it("has role=alert for screen readers and auto-dismisses after timeout", () => {
+      vi.useFakeTimers();
+      mockStore.errorMessage = "Error";
+      const { container } = render(Toast);
+
+      const toast = container.querySelector(".toast");
+      expect(toast?.getAttribute("role")).toBe("alert");
+
+      vi.advanceTimersByTime(4500);
+      expect(mockStore.clear).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
     });
   });
 });

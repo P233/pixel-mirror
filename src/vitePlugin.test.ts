@@ -37,7 +37,7 @@ describe("pixel-mirror Vite plugin", () => {
     expect(response.headers.get("content-type")).not.toContain("text/html");
     // 404 only when the package hasn't been built yet
     expect([200, 404]).toContain(response.status);
-    if (response.status === 200) expect(response.headers.get("content-type")).toBe("text/javascript");
+    if (response.status === 200) expect(response.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
   });
 
   it("only runs in dev", () => {

@@ -8,25 +8,6 @@ import Dock from "./Dock.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
 import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
 
-// Mock all SVG icons
-vi.mock("~/assets/align-bottom-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/align-horizontal-center-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/align-left-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/align-right-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/align-top-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/border-all-02-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/coordinate-01-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/flip-top-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/grid-table-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/idea-01-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/image-02-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/image-not-found-01-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/image-upload-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/moon-02-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/square-lock-02-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/square-unlock-02-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/sun-03-stroke-rounded.svg?component", () => ({ default: () => null }));
-
 // Mock sub-components
 vi.mock("./GridManager.svelte", () => ({ default: () => null }));
 vi.mock("./MockupManager.svelte", () => ({ default: () => null }));
@@ -39,16 +20,12 @@ vi.mock("~/utils/device", () => ({
 
 // Mock stores
 vi.mock("~/stores/dockStore.svelte", () => ({
-  DOCK_TRANSITION_DURATION: 200,
   dockStore: {
     initialized: true,
     mode: "toolbar" as "toolbar" | "mockups" | "grids",
-    toolbarVisible: true,
-    managerVisible: false,
     isManagerMode: false,
     position: "bottom" as "top" | "bottom",
     theme: "dark" as "dark" | "light",
-    size: { width: 500, height: 48 },
     init: vi.fn(),
     enterToolbar: vi.fn(),
     enterMockups: vi.fn(),
@@ -61,12 +38,14 @@ vi.mock("~/stores/dockStore.svelte", () => ({
 vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
   mockupOverlayStore: {
     activeMockupId: "test-id",
+    mode: "visible" as "visible" | "locked" | "dragging" | "solid" | "zoomed",
     isHidden: false,
     isLocked: false,
     isDragging: false,
     isSolidOrZoomed: false,
     opacity: 0.5,
     scale: 1,
+    position: { x: 100, y: 200 },
     alignmentX: "center" as "left" | "center" | "right",
     alignmentY: "top" as "top" | "bottom",
     positionDisplay: "100, 200",
@@ -75,24 +54,19 @@ vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
     resetOpacity: vi.fn(),
     setOpacity: vi.fn(),
     cycleScale: vi.fn(),
-    setAlignment: vi.fn(),
-    setAlignmentX: vi.fn(),
-    setAlignmentY: vi.fn()
+    setAlignment: vi.fn()
   }
 }));
 
-import { isTouchDevice } from "~/utils/device";
+import { isLastInputTouch, isTouchDevice } from "~/utils/device";
 
-// Get typed references to mocks (use `as unknown as` to bypass type checking for mocked modules)
+// Get typed references to mocks
 const mockDockStore = dockStore as unknown as {
   initialized: boolean;
   mode: "toolbar" | "mockups" | "grids";
-  toolbarVisible: boolean;
-  managerVisible: boolean;
   isManagerMode: boolean;
   position: "top" | "bottom";
   theme: "dark" | "light";
-  size: { width: number; height: number };
   init: ReturnType<typeof vi.fn>;
   enterToolbar: ReturnType<typeof vi.fn>;
   enterMockups: ReturnType<typeof vi.fn>;
@@ -103,12 +77,14 @@ const mockDockStore = dockStore as unknown as {
 
 const mockMockupStore = mockupOverlayStore as unknown as {
   activeMockupId: string | null;
+  mode: "visible" | "locked" | "dragging" | "solid" | "zoomed";
   isHidden: boolean;
   isLocked: boolean;
   isDragging: boolean;
   isSolidOrZoomed: boolean;
   opacity: number;
   scale: number;
+  position: { x: number; y: number };
   alignmentX: "left" | "center" | "right";
   alignmentY: "top" | "bottom";
   positionDisplay: string;
@@ -118,23 +94,18 @@ const mockMockupStore = mockupOverlayStore as unknown as {
   setOpacity: ReturnType<typeof vi.fn>;
   cycleScale: ReturnType<typeof vi.fn>;
   setAlignment: ReturnType<typeof vi.fn>;
-  setAlignmentX: ReturnType<typeof vi.fn>;
-  setAlignmentY: ReturnType<typeof vi.fn>;
 };
 
 const mockIsTouchDevice = isTouchDevice as ReturnType<typeof vi.fn>;
+const mockIsLastInputTouch = isLastInputTouch as ReturnType<typeof vi.fn>;
 
 describe("Dock component", () => {
   beforeEach(() => {
-    // Reset mock values
     mockDockStore.initialized = true;
     mockDockStore.mode = "toolbar";
-    mockDockStore.toolbarVisible = true;
-    mockDockStore.managerVisible = false;
     mockDockStore.isManagerMode = false;
     mockDockStore.position = "bottom";
     mockDockStore.theme = "dark";
-    mockDockStore.size = { width: 500, height: 48 };
     mockDockStore.init.mockClear();
     mockDockStore.enterToolbar.mockClear();
     mockDockStore.enterMockups.mockClear();
@@ -143,12 +114,14 @@ describe("Dock component", () => {
     mockDockStore.toggleTheme.mockClear();
 
     mockMockupStore.activeMockupId = "test-id";
+    mockMockupStore.mode = "visible";
     mockMockupStore.isHidden = false;
     mockMockupStore.isLocked = false;
     mockMockupStore.isDragging = false;
     mockMockupStore.isSolidOrZoomed = false;
     mockMockupStore.opacity = 0.5;
     mockMockupStore.scale = 1;
+    mockMockupStore.position = { x: 100, y: 200 };
     mockMockupStore.alignmentX = "center";
     mockMockupStore.alignmentY = "top";
     mockMockupStore.positionDisplay = "100, 200";
@@ -158,16 +131,15 @@ describe("Dock component", () => {
     mockMockupStore.setOpacity.mockClear();
     mockMockupStore.cycleScale.mockClear();
     mockMockupStore.setAlignment.mockClear();
-    mockMockupStore.setAlignmentX.mockClear();
-    mockMockupStore.setAlignmentY.mockClear();
     mockIsTouchDevice.mockReturnValue(false);
+    mockIsLastInputTouch.mockReturnValue(false);
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  describe("visibility", () => {
+  describe("visibility and inspect HUD", () => {
     it("renders .dock when initialized", () => {
       mockDockStore.initialized = true;
       const { container } = render(Dock);
@@ -183,12 +155,19 @@ describe("Dock component", () => {
       expect(dock.hidden).toBe(true);
     });
 
-    it("has hidden attribute when isSolidOrZoomed", () => {
+    it("hides main dock and shows floating inspect HUD when isSolidOrZoomed", () => {
       mockMockupStore.isSolidOrZoomed = true;
+      mockMockupStore.mode = "zoomed";
       const { container } = render(Dock);
 
       const dock = container.querySelector(".dock") as HTMLElement;
       expect(dock.hidden).toBe(true);
+
+      const inspectHud = container.querySelector("[data-testid='inspect-hud']");
+      expect(inspectHud).toBeInTheDocument();
+      expect(inspectHud?.textContent).toContain("200% Zoom");
+      // Releasing Space (or double-tapping on touch) exits, so the HUD only reports the mode
+      expect(inspectHud?.querySelector("button")).toBeNull();
     });
   });
 
@@ -215,45 +194,27 @@ describe("Dock component", () => {
     });
   });
 
-  describe("style bindings", () => {
-    it("applies width from dockStore.size", () => {
-      mockDockStore.size = { width: 600, height: 48 };
-      const { container } = render(Dock);
-
-      const dock = container.querySelector(".dock") as HTMLElement;
-      expect(dock.style.width).toBe("600px");
-    });
-
-    it("applies height from dockStore.size", () => {
-      mockDockStore.size = { width: 500, height: 100 };
-      const { container } = render(Dock);
-
-      const dock = container.querySelector(".dock") as HTMLElement;
-      expect(dock.style.height).toBe("100px");
-    });
-  });
-
-  describe("toolbar mode", () => {
-    it("renders .toolbar when mode is toolbar and toolbarVisible", () => {
+  describe("persistent floating pill toolbar", () => {
+    it("always renders .toolbar in the pill", () => {
       mockDockStore.mode = "toolbar";
-      mockDockStore.toolbarVisible = true;
       const { container } = render(Dock);
 
       expect(container.querySelector(".toolbar")).toBeInTheDocument();
     });
 
-    it("does not render .toolbar when mode is not toolbar", () => {
+    it("keeps .toolbar rendered even when a studio panel is open", () => {
       mockDockStore.mode = "mockups";
       const { container } = render(Dock);
 
-      expect(container.querySelector(".toolbar")).toBeNull();
+      expect(container.querySelector(".toolbar")).toBeInTheDocument();
+      expect(container.querySelector(".manager-wrapper")).toBeInTheDocument();
     });
 
     it("renders all toolbar buttons", () => {
       const { container } = render(Dock);
 
       const buttons = container.querySelectorAll(".toolbar .icon-button");
-      expect(buttons.length).toBeGreaterThanOrEqual(8);
+      expect(buttons.length).toBe(9);
     });
   });
 
@@ -292,28 +253,27 @@ describe("Dock component", () => {
   });
 
   describe("display values", () => {
-    it("shows opacity as percentage", () => {
+    it("names the opacity button with its percentage", () => {
       mockMockupStore.opacity = 0.75;
       const { container } = render(Dock);
 
-      const opacityValue = container.querySelector(".opacity-button__value");
-      expect(opacityValue?.textContent).toBe("75");
+      expect(container.querySelector("[data-testid='btn-opacity']")).toHaveAttribute("aria-label", "Opacity 75%");
     });
 
-    it("shows scale as 1x", () => {
+    it("shows scale as 1×", () => {
       mockMockupStore.scale = 1;
       const { container } = render(Dock);
 
-      const scaleValue = container.querySelector(".scale-button__value");
-      expect(scaleValue?.textContent).toBe("1x");
+      expect(container.querySelector(".scale-button__value")?.textContent).toBe("1×");
+      expect(container.querySelector("[data-testid='btn-scale']")).toHaveAttribute("aria-label", "Scale 1x");
     });
 
-    it("shows scale as .5x", () => {
+    it("shows scale as ½×", () => {
       mockMockupStore.scale = 0.5;
       const { container } = render(Dock);
 
-      const scaleValue = container.querySelector(".scale-button__value");
-      expect(scaleValue?.textContent).toBe(".5x");
+      expect(container.querySelector(".scale-button__value")?.textContent).toBe("½×");
+      expect(container.querySelector("[data-testid='btn-scale']")).toHaveAttribute("aria-label", "Scale 0.5x");
     });
 
     it("shows position display in coordinates element", () => {
@@ -346,13 +306,16 @@ describe("Dock component", () => {
       expect(mockMockupStore.toggleLock).toHaveBeenCalledTimes(1);
     });
 
-    it("calls resetOpacity on opacity button click", () => {
+    it("resets opacity on opacity button click without disabling other buttons", () => {
       const { container } = render(Dock);
 
       const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
       opacityBtn.click();
 
       expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
+      expect((container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement).disabled).toBe(false);
+      expect((container.querySelector("[data-testid='btn-mockup-manager']") as HTMLButtonElement).disabled).toBe(false);
+      expect((container.querySelector("[data-testid='btn-grid-manager']") as HTMLButtonElement).disabled).toBe(false);
     });
 
     it("calls cycleScale on scale button click", () => {
@@ -364,7 +327,7 @@ describe("Dock component", () => {
       expect(mockMockupStore.cycleScale).toHaveBeenCalledTimes(1);
     });
 
-    it("calls enterMockups on mockup manager button click", () => {
+    it("calls enterMockups on mockup manager button click and enterToolbar when already open", () => {
       const { container } = render(Dock);
 
       const mockupManagerBtn = container.querySelector("[data-testid='btn-mockup-manager']") as HTMLButtonElement;
@@ -401,62 +364,211 @@ describe("Dock component", () => {
     });
   });
 
-  describe("manager modes", () => {
-    it("renders .manager-wrapper when mode is mockups and managerVisible", () => {
+  describe("manager studio panels and mutual exclusion", () => {
+    it("renders .manager-wrapper immediately when mode is mockups and disables other window triggers", () => {
       mockDockStore.mode = "mockups";
-      mockDockStore.managerVisible = true;
       const { container } = render(Dock);
 
-      expect(container.querySelector(".manager-wrapper")).toBeInTheDocument();
+      expect(container.querySelector(".manager-wrapper.dock__panel--mockups")).toBeInTheDocument();
+      expect((container.querySelector("[data-testid='btn-grid-manager']") as HTMLButtonElement).disabled).toBe(true);
+      expect((container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement).disabled).toBe(true);
+      expect((container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement).disabled).toBe(true);
     });
 
-    it("renders .manager-wrapper when mode is grids and managerVisible", () => {
+    it("renders .manager-wrapper immediately when mode is grids and disables other window triggers", () => {
       mockDockStore.mode = "grids";
-      mockDockStore.managerVisible = true;
       const { container } = render(Dock);
 
-      expect(container.querySelector(".manager-wrapper")).toBeInTheDocument();
+      expect(container.querySelector(".manager-wrapper.dock__panel--grids")).toBeInTheDocument();
+      expect((container.querySelector("[data-testid='btn-mockup-manager']") as HTMLButtonElement).disabled).toBe(true);
+      expect((container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement).disabled).toBe(true);
+      expect((container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement).disabled).toBe(true);
     });
 
-    it("does not render .manager-wrapper when managerVisible is false", () => {
-      mockDockStore.mode = "mockups";
-      mockDockStore.managerVisible = false;
+    it("does not render .manager-wrapper in toolbar mode", () => {
+      mockDockStore.mode = "toolbar";
       const { container } = render(Dock);
 
       expect(container.querySelector(".manager-wrapper")).toBeNull();
     });
   });
 
-  describe("theme icon display", () => {
-    it("renders correctly when theme is dark", () => {
-      mockDockStore.theme = "dark";
+  describe("opacity popover", () => {
+    it("opens opacity popover on mouseenter, keeps it open while moving across toolbar to popover, and updates opacity", async () => {
       const { container } = render(Dock);
 
-      const themeBtn = container.querySelector("[data-testid='btn-theme']");
-      expect(themeBtn).toBeInTheDocument();
+      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
+      const toolbar = container.querySelector(".toolbar") as HTMLElement;
+      opacityBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+
+      const popover = container.querySelector("[data-testid='popover-opacity']") as HTMLElement;
+      expect(popover).toBeInTheDocument();
+
+      // Simulate pointer leaving button across toolbar padding before entering the popover
+      opacityBtn.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, relatedTarget: toolbar }));
+      popover.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 160));
+      expect(container.querySelector("[data-testid='popover-opacity']")).toBeInTheDocument();
+
+      const slider = container.querySelector("[data-testid='slider-opacity']") as HTMLInputElement;
+      slider.value = "75";
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(mockMockupStore.setOpacity).toHaveBeenCalledWith(0.75);
+
+      const resetBtn = container.querySelector("[data-testid='btn-opacity-reset']") as HTMLButtonElement;
+      resetBtn.click();
+      expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
     });
 
-    it("renders correctly when theme is light", () => {
-      mockDockStore.theme = "light";
+    it("leaves Escape to a focused host input while a hover popover is open", async () => {
+      const { container } = render(Dock);
+      const hostInput = document.createElement("input");
+      document.body.appendChild(hostInput);
+
+      container
+        .querySelector("[data-testid='btn-opacity']")!
+        .dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 10));
+      hostInput.focus();
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      hostInput.dispatchEvent(escape);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(escape.defaultPrevented).toBe(false);
+      expect(container.querySelector("[data-testid='popover-opacity']")).toBeInTheDocument();
+      hostInput.remove();
+    });
+
+    it("closes a hover popover on Escape while a host button has focus, instead of toggling the lock", async () => {
+      const { container } = render(Dock);
+      const hostButton = document.createElement("button");
+      document.body.appendChild(hostButton);
+
+      container
+        .querySelector("[data-testid='btn-opacity']")!
+        .dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 10));
+      hostButton.focus();
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      hostButton.dispatchEvent(escape);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(escape.defaultPrevented).toBe(true);
+      expect(container.querySelector("[data-testid='popover-opacity']")).toBeNull();
+      hostButton.remove();
+    });
+
+    it("sets aria-expanded and closes opacity popover on Escape", async () => {
       const { container } = render(Dock);
 
-      const themeBtn = container.querySelector("[data-testid='btn-theme']");
-      expect(themeBtn).toBeInTheDocument();
+      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
+      expect(opacityBtn.getAttribute("aria-expanded")).toBe("false");
+
+      opacityBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 10));
+      expect(opacityBtn.getAttribute("aria-expanded")).toBe("true");
+      expect(container.querySelector("[data-testid='popover-opacity']")).toBeInTheDocument();
+
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector("[data-testid='popover-opacity']")).toBeNull();
+      expect(opacityBtn.getAttribute("aria-expanded")).toBe("false");
     });
   });
 
   describe("alignment popover", () => {
+    const pointerClick = () => new MouseEvent("click", { bubbles: true, detail: 1 });
+    const keyboardClick = () => new MouseEvent("click", { bubbles: true, detail: 0 });
+
     it("shows alignment popover on alignment button mouseenter", async () => {
       mockMockupStore.isDragging = false;
       const { container } = render(Dock);
 
       const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
       alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-
-      // Wait for state update
       await new Promise((r) => setTimeout(r, 0));
 
-      expect(container.querySelector(".dock__popover")).toBeInTheDocument();
+      expect(container.querySelector(".dock__popover--placement")).toBeInTheDocument();
+    });
+
+    it("restores the default top-center alignment on click, keeping the hovered matrix open", async () => {
+      const { container } = render(Dock);
+      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
+
+      alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      alignBtn.dispatchEvent(pointerClick());
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(mockMockupStore.setAlignment).toHaveBeenCalledWith("top", "center");
+      expect(container.querySelector(".dock__popover--placement")).toBeInTheDocument();
+      // Keyboard activation opens the matrix instead, so the name doesn't promise the click behavior
+      expect(alignBtn).toHaveAttribute("aria-label", "Alignment");
+    });
+
+    it("marks the current alignment in the button icon", () => {
+      mockMockupStore.alignmentX = "right";
+      mockMockupStore.alignmentY = "bottom";
+      const { container } = render(Dock);
+      const mark = container.querySelector("[data-testid='btn-alignment'] circle.mark");
+
+      expect(mark).toHaveAttribute("cx", "20");
+      expect(mark).toHaveAttribute("cy", "16");
+    });
+
+    it("opens the matrix on the first tap (touch has no hover) and restores top center on the next", async () => {
+      mockIsLastInputTouch.mockReturnValue(true);
+      const { container } = render(Dock);
+      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
+
+      alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector(".dock__popover--placement")).toBeNull();
+
+      alignBtn.dispatchEvent(pointerClick());
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector(".dock__popover--placement")).toBeInTheDocument();
+      expect(mockMockupStore.setAlignment).not.toHaveBeenCalled();
+
+      alignBtn.dispatchEvent(pointerClick());
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockMockupStore.setAlignment).toHaveBeenCalledWith("top", "center");
+      expect(container.querySelector(".dock__popover--placement")).toBeInTheDocument();
+    });
+
+    it("closes on a pointerdown outside the dock", async () => {
+      const { container } = render(Dock);
+      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
+
+      alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      container
+        .querySelector<HTMLButtonElement>("[data-testid='matrix-top-left']")!
+        .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector(".dock__popover--placement")).toBeInTheDocument();
+
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector(".dock__popover--placement")).toBeNull();
+    });
+
+    it("moves focus into the matrix on keyboard activation and back to the trigger on Escape", async () => {
+      const { container } = render(Dock);
+      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
+
+      alignBtn.focus();
+      alignBtn.dispatchEvent(keyboardClick());
+      await new Promise((r) => setTimeout(r, 0));
+      expect(document.activeElement).toBe(container.querySelector("[data-testid='matrix-top-center']"));
+
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      document.activeElement!.dispatchEvent(escape);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(container.querySelector(".dock__popover--placement")).toBeNull();
+      expect(escape.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(alignBtn);
     });
 
     it("does not show alignment popover when dragging", () => {
@@ -466,7 +578,7 @@ describe("Dock component", () => {
       const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
       alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
 
-      expect(container.querySelector(".dock__popover")).toBeNull();
+      expect(container.querySelector(".dock__popover--placement")).toBeNull();
     });
 
     it("hides alignment popover on mouseleave", async () => {
@@ -477,9 +589,8 @@ describe("Dock component", () => {
       alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
 
       await new Promise((r) => setTimeout(r, 0));
-      expect(container.querySelector(".dock__popover")).toBeInTheDocument();
+      expect(container.querySelector(".dock__popover--placement")).toBeInTheDocument();
 
-      // Create mouseleave event that doesn't target alignment area
       alignBtn.dispatchEvent(
         new MouseEvent("mouseleave", {
           bubbles: true,
@@ -488,61 +599,79 @@ describe("Dock component", () => {
       );
 
       await new Promise((r) => setTimeout(r, 0));
-      expect(container.querySelector(".dock__popover")).toBeNull();
+      expect(container.querySelector(".dock__popover--placement")).toBeNull();
     });
 
-    it("opens popover on first click, sets top-center on second click (three-stage cycle)", async () => {
-      // Set alignment to something other than top-center
-      mockMockupStore.alignmentY = "bottom";
-      mockMockupStore.alignmentX = "left";
-
+    it("renders only the 2x3 alignment matrix in the placement popover", async () => {
       const { container } = render(Dock);
 
-      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
-
-      // First click: opens popover
-      alignBtn.click();
-      await new Promise((r) => setTimeout(r, 0));
-      expect(container.querySelector(".dock__popover")).not.toBeNull();
-      expect(mockMockupStore.setAlignment).not.toHaveBeenCalled();
-
-      // Second click: sets top-center (since not already at top-center)
-      alignBtn.click();
-      expect(mockMockupStore.setAlignment).toHaveBeenCalledWith("top", "center");
-    });
-
-    it("calls setAlignmentY on vertical alignment buttons", async () => {
-      mockMockupStore.isDragging = false;
-      const { container } = render(Dock);
-
-      // Show popover first
       const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
       alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
 
-      // Click the top alignment button in vertical group
-      const verticalButtons = container.querySelectorAll(".alignment-group--vertical .alignment-button");
-      expect(verticalButtons.length).toBeGreaterThan(0);
+      const popover = container.querySelector(".dock__popover--placement") as HTMLElement;
+      expect(popover).not.toBeNull();
+      expect(popover.children).toHaveLength(1);
+      expect(popover.querySelector(".alignment-matrix")).toBeInTheDocument();
+      expect(popover.querySelector(".chip-row")).toBeNull();
 
-      (verticalButtons[0] as HTMLButtonElement).click();
-      expect(mockMockupStore.setAlignmentY).toHaveBeenCalledWith("top");
+      const bottomRightDot = container.querySelector("[data-testid='matrix-bottom-right']") as HTMLButtonElement;
+      bottomRightDot.click();
+      expect(mockMockupStore.setAlignment).toHaveBeenCalledWith("bottom", "right");
     });
 
-    it("calls setAlignmentX on horizontal alignment buttons", async () => {
-      mockMockupStore.isDragging = false;
+    it("aligns popover horizontally with its trigger icon button", async () => {
       const { container } = render(Dock);
-
-      // Show popover first
+      const dockEl = container.querySelector(".dock") as HTMLDivElement;
+      const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
       const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
+
+      vi.spyOn(dockEl, "getBoundingClientRect").mockReturnValue({
+        left: 100,
+        width: 360,
+        top: 500,
+        height: 46,
+        right: 460,
+        bottom: 546,
+        x: 100,
+        y: 500,
+        toJSON: () => ({})
+      });
+      vi.spyOn(opacityBtn, "getBoundingClientRect").mockReturnValue({
+        left: 190,
+        width: 36,
+        top: 505,
+        height: 36,
+        right: 226,
+        bottom: 541,
+        x: 190,
+        y: 505,
+        toJSON: () => ({})
+      });
+      vi.spyOn(alignBtn, "getBoundingClientRect").mockReturnValue({
+        left: 234,
+        width: 36,
+        top: 505,
+        height: 36,
+        right: 270,
+        bottom: 541,
+        x: 234,
+        y: 505,
+        toJSON: () => ({})
+      });
+
+      opacityBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+
+      const opacityPopover = container.querySelector("[data-testid='popover-opacity']") as HTMLElement;
+      expect(opacityPopover.style.left).toBe("108px");
+
+      opacityBtn.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, relatedTarget: document.body }));
       alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 0));
 
-      // Click the left alignment button in horizontal group
-      const horizontalButtons = container.querySelectorAll(".alignment-group--horizontal .alignment-button");
-      expect(horizontalButtons.length).toBeGreaterThan(0);
-
-      (horizontalButtons[0] as HTMLButtonElement).click();
-      expect(mockMockupStore.setAlignmentX).toHaveBeenCalledWith("left");
+      const alignPopover = container.querySelector(".dock__popover--placement") as HTMLElement;
+      expect(alignPopover.style.left).toBe("152px");
     });
   });
 
@@ -573,57 +702,19 @@ describe("Dock component", () => {
     });
   });
 
-  describe("visibility button icons", () => {
-    it("works when mockup is visible", () => {
-      mockMockupStore.isHidden = false;
-      const { container } = render(Dock);
-
-      const visibilityBtn = container.querySelector("[data-testid='btn-visibility']");
-      expect(visibilityBtn).toBeInTheDocument();
-    });
-
-    it("works when mockup is hidden", () => {
-      mockMockupStore.isHidden = true;
-      const { container } = render(Dock);
-
-      const visibilityBtn = container.querySelector("[data-testid='btn-visibility']");
-      expect(visibilityBtn).toBeInTheDocument();
-    });
-  });
-
-  describe("lock button icons", () => {
-    it("works when mockup is locked", () => {
-      mockMockupStore.isLocked = true;
-      const { container } = render(Dock);
-
-      const lockBtn = container.querySelector("[data-testid='btn-lock']");
-      expect(lockBtn).toBeInTheDocument();
-    });
-
-    it("works when mockup is unlocked", () => {
-      mockMockupStore.isLocked = false;
-      const { container } = render(Dock);
-
-      const lockBtn = container.querySelector("[data-testid='btn-lock']");
-      expect(lockBtn).toBeInTheDocument();
-    });
-  });
-
-  describe("position button flip class", () => {
-    it("applies .flip when position is top", () => {
+  describe("position button", () => {
+    it("offers moving the toolbar to the other edge", () => {
       mockDockStore.position = "top";
-      const { container } = render(Dock);
+      const { container, unmount } = render(Dock);
+      expect(container.querySelector("[data-testid='btn-position']")).toHaveAttribute(
+        "title",
+        "Move toolbar to the bottom"
+      );
+      unmount();
 
-      const positionBtn = container.querySelector("[data-testid='btn-position']");
-      expect(positionBtn?.classList.contains("flip")).toBe(true);
-    });
-
-    it("does not apply .flip when position is bottom", () => {
       mockDockStore.position = "bottom";
-      const { container } = render(Dock);
-
-      const positionBtn = container.querySelector("[data-testid='btn-position']");
-      expect(positionBtn?.classList.contains("flip")).toBe(false);
+      const { container: bottom } = render(Dock);
+      expect(bottom.querySelector("[data-testid='btn-position']")).toHaveAttribute("title", "Move toolbar to the top");
     });
   });
 });
@@ -635,11 +726,10 @@ describe("Dock component", () => {
 describe("Dock component (touch device)", () => {
   beforeEach(() => {
     mockIsTouchDevice.mockReturnValue(true);
+    mockIsLastInputTouch.mockReturnValue(false);
 
-    // Reset mock values
     mockDockStore.initialized = true;
     mockDockStore.mode = "toolbar";
-    mockDockStore.toolbarVisible = true;
     mockMockupStore.activeMockupId = "test-id";
     mockMockupStore.isHidden = false;
     mockMockupStore.isLocked = false;
@@ -688,7 +778,7 @@ describe("Dock component (touch device)", () => {
       expect(mockMockupStore.setOpacity).not.toHaveBeenCalled();
     });
 
-    it("does not slide with a mouse, which clicks to reset instead", () => {
+    it("does not slide with a mouse, which clicks to reset opacity instead", () => {
       const button = opacityButton();
 
       button.dispatchEvent(pointer("pointerdown", "mouse", 100));
@@ -699,7 +789,7 @@ describe("Dock component (touch device)", () => {
       expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
     });
 
-    it("does not reset on a touch tap", () => {
+    it("does not reset opacity after a touch tap or slide", () => {
       const button = opacityButton();
 
       button.dispatchEvent(pointer("pointerdown", "touch", 100));
@@ -707,83 +797,6 @@ describe("Dock component (touch device)", () => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 
       expect(mockMockupStore.resetOpacity).not.toHaveBeenCalled();
-    });
-
-    it("resets from the keyboard even after a touch slide", () => {
-      const button = opacityButton();
-      button.dispatchEvent(pointer("pointerdown", "touch", 100));
-      button.dispatchEvent(pointer("pointerup", "touch", 100));
-
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
-
-      expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("alignment popover closing on touch outside", () => {
-    it("closes alignment popover when tapping outside dock on mobile", async () => {
-      const { container } = render(Dock);
-
-      // Open popover
-      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
-      alignBtn.click();
-      await new Promise((r) => setTimeout(r, 10));
-
-      expect(container.querySelector(".dock__popover")).toBeInTheDocument();
-
-      // Tap outside the dock (simulate touchend on window)
-      // Note: This is tricky to test because it depends on composedPath
-      // We verify the popover exists first and the behavior is testable
-    });
-  });
-
-  describe("alignment button three-stage cycle (mobile)", () => {
-    it("opens popover on first click", async () => {
-      const { container } = render(Dock);
-
-      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
-      alignBtn.click();
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(container.querySelector(".dock__popover")).toBeInTheDocument();
-    });
-
-    it("sets top-center on second click when not already at top-center", async () => {
-      mockMockupStore.alignmentY = "bottom";
-      mockMockupStore.alignmentX = "left";
-
-      const { container } = render(Dock);
-
-      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
-
-      // First click: open popover
-      alignBtn.click();
-      await new Promise((r) => setTimeout(r, 0));
-
-      // Second click: set to top-center
-      alignBtn.click();
-
-      expect(mockMockupStore.setAlignment).toHaveBeenCalledWith("top", "center");
-    });
-
-    it("closes popover on third click when already at top-center", async () => {
-      mockMockupStore.alignmentY = "top";
-      mockMockupStore.alignmentX = "center";
-
-      const { container } = render(Dock);
-
-      const alignBtn = container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement;
-
-      // First click: open popover
-      alignBtn.click();
-      await new Promise((r) => setTimeout(r, 0));
-      expect(container.querySelector(".dock__popover")).toBeInTheDocument();
-
-      // Second click: already at top-center, so close popover
-      alignBtn.click();
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(container.querySelector(".dock__popover")).toBeNull();
     });
   });
 });

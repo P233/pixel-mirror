@@ -6,38 +6,47 @@
  * - mockups:  Mockup manager panel
  * - grids:    Grid manager panel
  *
- * When entering manager modes (mockups/grids), keyboard events for mockup
- * overlay are automatically disabled via the keyboardStore integration.
+ * keyboardStore reads the mode and ignores overlay shortcuts outside toolbar mode.
  */
 
 // Platform
 import { createSettings } from "~/platform/settings.svelte";
 // Stores
-import { keyboardStore } from "./keyboardStore.svelte";
 import { toastStore } from "./toastStore.svelte";
 
-export const DOCK_TRANSITION_DURATION = 250;
+function getSystemMediaQuery(): MediaQueryList | null {
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)");
+  }
+  return null;
+}
 
-const DOCK_SIZES: Record<DockMode, Size> = {
-  toolbar: { width: 380, height: 44 },
-  mockups: { width: 820, height: 480 },
-  grids: { width: 640, height: 580 }
-};
-
-const DEFAULT_DOCK_SETTINGS: DockSettings = { position: "bottom", theme: "light" };
+const DEFAULT_DOCK_SETTINGS: DockSettings = { position: "bottom", theme: null };
 
 function createDockStore() {
   const settings = createSettings("dock", DEFAULT_DOCK_SETTINGS, {
     position: (value) => value === "top" || value === "bottom",
-    theme: (value) => value === "light" || value === "dark"
+    theme: (value) => value === null || value === "light" || value === "dark"
   });
 
+  const mediaQuery = getSystemMediaQuery();
+  let systemTheme = $state<Theme>(mediaQuery?.matches ? "dark" : "light");
+
+  if (mediaQuery && typeof mediaQuery.addEventListener === "function") {
+    mediaQuery.addEventListener("change", (e: MediaQueryListEvent) => {
+      systemTheme = e.matches ? "dark" : "light";
+      if (settings.current.theme !== null) {
+        settings.update({ theme: null });
+      }
+    });
+  }
+
   let mode = $state<DockMode>("toolbar");
-  let managerVisible = $state(false);
-  let toolbarVisible = $state(true);
 
   let initialized = $state(false);
   let initPromise: Promise<void> | null = null;
+
+  const effectiveTheme = $derived<Theme>(settings.current.theme ?? systemTheme);
 
   return {
     get initialized() {
@@ -49,23 +58,8 @@ function createDockStore() {
     get position() {
       return settings.current.position;
     },
-    get theme() {
-      return settings.current.theme;
-    },
-    get managerVisible() {
-      return managerVisible;
-    },
-    set managerVisible(v) {
-      managerVisible = v;
-    },
-    get toolbarVisible() {
-      return toolbarVisible;
-    },
-    set toolbarVisible(v) {
-      toolbarVisible = v;
-    },
-    get size() {
-      return DOCK_SIZES[mode];
+    get theme(): Theme {
+      return effectiveTheme;
     },
     get isManagerMode() {
       return mode === "mockups" || mode === "grids";
@@ -89,24 +83,15 @@ function createDockStore() {
     },
 
     enterToolbar: () => {
-      managerVisible = false;
       mode = "toolbar";
-      toolbarVisible = true;
-      keyboardStore.resetModifierStates();
     },
 
     enterMockups: () => {
-      keyboardStore.resetModifierStates();
-      toolbarVisible = false;
       mode = "mockups";
-      managerVisible = false;
     },
 
     enterGrids: () => {
-      keyboardStore.resetModifierStates();
-      toolbarVisible = false;
       mode = "grids";
-      managerVisible = false;
     },
 
     togglePosition: () => {
@@ -114,7 +99,7 @@ function createDockStore() {
     },
 
     toggleTheme: () => {
-      settings.update({ theme: settings.current.theme === "light" ? "dark" : "light" });
+      settings.update({ theme: effectiveTheme === "light" ? "dark" : "light" });
     }
   };
 }

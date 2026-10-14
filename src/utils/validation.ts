@@ -4,8 +4,8 @@
  * Provides validation functions for user input and configuration data.
  */
 
-import { ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "~/constants";
-import { FileError, ValidationError } from "./errors";
+import { ALLOWED_MIME_TYPES, GRID_COLUMNS_MAX, GRID_COLUMNS_MIN, MAX_FILE_SIZE } from "~/constants";
+import { ValidationError } from "./errors";
 
 // CSS length pattern: number followed by unit
 const CSS_LENGTH_PATTERN = /^\d+(\.\d+)?(px|%|em|rem|vw|vh)$/;
@@ -96,31 +96,13 @@ export function validatePositiveInt(
 }
 
 /**
- * Validate number within range
- */
-export function validateNumberRange(
-  value: number,
-  fieldName: string,
-  min: number,
-  max: number
-): ValidationResult<number> {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return fail(`${fieldName} must be a number`, `Got ${value}`);
-  }
-  if (value < min || value > max) {
-    return fail(`${fieldName} must be between ${min} and ${max}`, `Got ${value}`);
-  }
-  return ok(value);
-}
-
-/**
  * Validate layout grid configuration
  */
 export function validateLayoutGridConfig(config: GridInput): ValidationResult<GridInput> {
   const widthResult = validateCSSLength(config.width, "Width");
   if (!widthResult.success) return widthResult as ValidationResult<GridInput>;
 
-  const columnsResult = validatePositiveInt(config.columns, "Columns", 1, 100);
+  const columnsResult = validatePositiveInt(config.columns, "Columns", GRID_COLUMNS_MIN, GRID_COLUMNS_MAX);
   if (!columnsResult.success) return columnsResult as ValidationResult<GridInput>;
 
   const gutterResult = validateCSSLength(config.gutterWidth, "Gutter width");
@@ -166,17 +148,17 @@ export function validateFile(file: File): ValidationResult<File> {
  */
 export function validateFiles(files: File[]): {
   validFiles: File[];
-  errors: FileError[];
+  errors: ValidationError[];
 } {
   const validFiles: File[] = [];
-  const errors: FileError[] = [];
+  const errors: ValidationError[] = [];
 
   for (const file of files) {
     const result = validateFile(file);
     if (result.success) {
       validFiles.push(result.data);
     } else {
-      errors.push(new FileError(`${file.name}: ${result.error.message}`, result.error.details));
+      errors.push(new ValidationError(`${file.name}: ${result.error.message}`, result.error.details));
     }
   }
 

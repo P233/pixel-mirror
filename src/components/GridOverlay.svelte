@@ -49,6 +49,8 @@
     inset: 0;
     z-index: $max-z-index - 2;
     display: flex;
+    overflow: hidden;
+    overflow: clip;
     pointer-events: none;
 
     &--center {

@@ -12,8 +12,15 @@
   import { dockStore } from "~/stores/dockStore.svelte";
   import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
 
-  // The aligned position depends on the page size
-  onMount(() => observePageSize(mockupOverlayStore.setPageSize));
+  let viewportElement = $state<HTMLDivElement | null>(null);
+
+  // The aligned position depends on the page size, which can change on resize or layout shifts
+  onMount(() =>
+    observePageSize(
+      (size) => mockupOverlayStore.setPageSize(size),
+      () => viewportElement
+    )
+  );
 
   /**
    * Pointer events on the overlay are only handled when the dock is in toolbar mode
@@ -31,8 +38,8 @@
 
   let cursor = $derived(isInteractive ? CURSOR_MAP[mockupOverlayStore.mode] : "default");
 
-  // Locked mode keeps pointer events so scrolling over the mockup works with momentum (see touch-action)
-  let pointerEvents = $derived(isInteractive ? "auto" : "none");
+  // Locked mode uses pointer-events: none so clicks, hovers, and scrolling pass through to the host page
+  let pointerEvents = $derived(isInteractive && mockupOverlayStore.mode !== "locked" ? "auto" : "none");
 
   let transform = $derived(
     `translate3d(${mockupOverlayStore.position.x}px, ${mockupOverlayStore.position.y}px, 0) scale(${mockupOverlayStore.scale})`
@@ -52,7 +59,11 @@
 </script>
 
 {#if !mockupOverlayStore.isHidden && mockupOverlayStore.activeMockupUrl}
-  <div class="mockup-container">
+  <div
+    bind:this={viewportElement}
+    class="mockup-viewport"
+    style:height={mockupOverlayStore.pageSize?.height ? `${mockupOverlayStore.pageSize.height}px` : undefined}
+  >
     <img
       {@attach overlayGestures(mockupOverlayStore, () => isInteractive)}
       draggable="false"
@@ -71,11 +82,14 @@
 {/if}
 
 <style lang="scss">
-  .mockup-container {
+  // Clips the mockup at the host page boundaries so zooming (e.g. 2x) or dragging past
+  // the edges never expands the host document or introduces scrollbars.
+  .mockup-viewport {
     position: absolute;
     inset: 0;
     z-index: $max-z-index - 3;
     overflow: hidden;
+    overflow: clip;
     pointer-events: none;
   }
 

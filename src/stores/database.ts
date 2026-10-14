@@ -6,23 +6,33 @@
  *
  * Schema versions:
  * - 1–2: mockups (metadata + thumbnail ArrayBuffer), mockup_blobs (original ArrayBuffer), grids, settings
- * - 3:   images are stored as Blobs (no copies into ArrayBuffers), mockup metadata has a `thumbnail` Blob
+ * - 3:   images are stored as `{ bytes, type }` (StoredBinary); the thumbnail is part of the mockup metadata
+ *
+ * Images are stored as bytes rather than Blobs: WebKit rejects Blobs in IndexedDB in private windows.
  */
 
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from "idb";
-import { DatabaseError } from "~/utils/errors";
+import { DatabaseBlockedError, DatabaseError } from "~/utils/errors";
 
 const DB_NAME = "PixelMirrorDB";
 const VERSION = 3;
 
+/** Image data as stored; Blobs were written by unreleased version 3 builds and are still read */
+type StoredBinary = { bytes: ArrayBuffer; type: string } | Blob;
+
+/** Mockup metadata as stored since version 3 */
+interface MockupRecord extends Omit<Mockup, "thumbnail"> {
+  thumbnail: StoredBinary;
+}
+
 interface PixelMirrorDBSchema extends DBSchema {
   mockups: {
     key: Mockup["id"];
-    value: Mockup;
+    value: MockupRecord;
   };
   mockup_blobs: {
     key: Mockup["id"];
-    value: Blob;
+    value: StoredBinary;
   };
   grids: {
     key: LayoutGridConfig["id"];
@@ -58,7 +68,20 @@ function generateId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-async function migrateImagesToBlobs(tx: UpgradeTransaction) {
+async function toStoredBinary(blob: Blob): Promise<StoredBinary> {
+  return { bytes: await blob.arrayBuffer(), type: blob.type };
+}
+
+function toBlob(stored: StoredBinary): Blob {
+  return stored instanceof Blob ? stored : new Blob([stored.bytes], { type: stored.type });
+}
+
+function toMockup({ thumbnail, ...record }: MockupRecord): Mockup {
+  return { ...record, thumbnail: toBlob(thumbnail) };
+}
+
+/** Version 2 kept the MIME type only in the metadata; version 3 stores it with each image */
+async function migrateImagesToStoredBinary(tx: UpgradeTransaction) {
   const mimeTypes = new Map<string, string>();
 
   let metadataCursor = await tx.objectStore("mockups").openCursor();
@@ -66,7 +89,7 @@ async function migrateImagesToBlobs(tx: UpgradeTransaction) {
     const { thumbnailBuffer, ...record } = metadataCursor.value as unknown as MockupRecordV2;
     mimeTypes.set(record.id, record.mimeType);
     if (thumbnailBuffer) {
-      await metadataCursor.update({ ...record, thumbnail: new Blob([thumbnailBuffer], { type: record.mimeType }) });
+      await metadataCursor.update({ ...record, thumbnail: { bytes: thumbnailBuffer, type: record.mimeType } });
     }
     metadataCursor = await metadataCursor.continue();
   }
@@ -75,18 +98,51 @@ async function migrateImagesToBlobs(tx: UpgradeTransaction) {
   while (imageCursor) {
     const value: unknown = imageCursor.value;
     if (value instanceof ArrayBuffer) {
-      await imageCursor.update(new Blob([value], { type: mimeTypes.get(imageCursor.key) ?? "" }));
+      await imageCursor.update({ bytes: value, type: mimeTypes.get(imageCursor.key) ?? "" });
     }
     imageCursor = await imageCursor.continue();
   }
 }
 
+/**
+ * Wait for a transaction's requests and its completion together. A failed request aborts the
+ * transaction, so `done` rejects as well; awaited separately, that rejection would surface on
+ * the host page as an unhandled rejection.
+ */
+async function settleTransaction(requests: Promise<unknown>[], done: Promise<void>): Promise<void> {
+  await Promise.all([...requests, done]);
+}
+
 let dbPromise: Promise<IDBPDatabase<PixelMirrorDBSchema>> | undefined;
 
-async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
-  if (!dbPromise) {
-    dbPromise = openDB<PixelMirrorDBSchema>(DB_NAME, VERSION, {
+/** How long an open may wait behind another tab's pending upgrade before it is reported (ms) */
+const OPEN_QUEUE_TIMEOUT = 3000;
+
+/**
+ * Set while a tab of a version before 2.1 holds the database: unlike this version it doesn't close
+ * its connection for an upgrade, so opens wait until that tab closes. Calls fail fast meanwhile.
+ */
+let isUpgradeBlocked = false;
+
+function openDatabase(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
+  return new Promise((resolve, reject) => {
+    let isReported = false;
+    // Tell the user what to do rather than wait with nothing loaded; the open itself carries on
+    const reportBlocked = () => {
+      clearTimeout(queueTimer);
+      if (isReported) return;
+      isReported = true;
+      isUpgradeBlocked = true;
+      reject(new DatabaseBlockedError());
+    };
+    // Only the open at the front of the queue gets `blocked`; others (e.g. a second tab of this
+    // version) just wait. One that hasn't started upgrading or opened by now is stuck there.
+    const queueTimer = setTimeout(reportBlocked, OPEN_QUEUE_TIMEOUT);
+
+    openDB<PixelMirrorDBSchema>(DB_NAME, VERSION, {
       async upgrade(db, oldVersion, _newVersion, tx) {
+        // Migrating many large images can take a while; that is progress, not a stuck queue
+        clearTimeout(queueTimer);
         if (oldVersion < 2) {
           // Version 1 databases may lack some stores; create whatever is missing
           if (!db.objectStoreNames.contains("mockups")) db.createObjectStore("mockups", { keyPath: "id" });
@@ -95,7 +151,7 @@ async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
           if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings");
         }
         if (oldVersion < 3) {
-          await migrateImagesToBlobs(tx);
+          await migrateImagesToStoredBinary(tx);
         }
       },
       // Another tab (e.g. with a newer version of the tool) wants to upgrade: let it,
@@ -107,8 +163,29 @@ async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
       // The browser closed the connection (e.g. storage cleared)
       terminated() {
         dbPromise = undefined;
+      },
+      blocked: reportBlocked
+    }).then(
+      (db) => {
+        clearTimeout(queueTimer);
+        if (!isReported) return resolve(db);
+        // The older tab closed and the open went through: later calls use this connection
+        isUpgradeBlocked = false;
+        dbPromise = Promise.resolve(db);
+      },
+      (error) => {
+        clearTimeout(queueTimer);
+        if (isReported) isUpgradeBlocked = false;
+        else reject(error);
       }
-    }).catch((error) => {
+    );
+  });
+}
+
+async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
+  if (isUpgradeBlocked) throw new DatabaseBlockedError();
+  if (!dbPromise) {
+    dbPromise = openDatabase().catch((error) => {
       // Don't cache the failure: the next call retries opening the database
       dbPromise = undefined;
       throw error;
@@ -124,8 +201,8 @@ async function getDB(): Promise<IDBPDatabase<PixelMirrorDBSchema>> {
 export async function getAllMockups(): Promise<Mockup[]> {
   try {
     const db = await getDB();
-    const mockups = await db.getAll("mockups");
-    return mockups.sort((a, b) => b.createdAt - a.createdAt);
+    const records = await db.getAll("mockups");
+    return records.map(toMockup).sort((a, b) => b.createdAt - a.createdAt);
   } catch (error) {
     throw new DatabaseError("Failed to load mockups", error);
   }
@@ -135,7 +212,8 @@ export async function getAllMockups(): Promise<Mockup[]> {
 export async function getMockupImage(id: string): Promise<Blob | undefined> {
   try {
     const db = await getDB();
-    return await db.get("mockup_blobs", id);
+    const stored = await db.get("mockup_blobs", id);
+    return stored && toBlob(stored);
   } catch (error) {
     throw new DatabaseError("Failed to get mockup", error);
   }
@@ -144,6 +222,14 @@ export async function getMockupImage(id: string): Promise<Blob | undefined> {
 export async function addMockups(input: MockupInput | MockupInput[]): Promise<string[]> {
   try {
     const inputs = Array.isArray(input) ? input : [input];
+    // Read the files before opening the transaction: awaiting anything else would let it auto-commit
+    const records = await Promise.all(
+      inputs.map(async ({ image, thumbnail, ...metadata }) => ({
+        metadata,
+        image: await toStoredBinary(image),
+        thumbnail: await toStoredBinary(thumbnail)
+      }))
+    );
     const db = await getDB();
     const tx = db.transaction(["mockups", "mockup_blobs"], "readwrite");
     const metadataStore = tx.objectStore("mockups");
@@ -151,15 +237,13 @@ export async function addMockups(input: MockupInput | MockupInput[]): Promise<st
 
     const now = Date.now();
     const ids: string[] = [];
-    const putPromises = inputs.map((item, index) => {
+    const requests = records.flatMap(({ metadata, image, thumbnail }, index) => {
       const id = generateId();
       ids.push(id);
-      const { image, ...metadata } = item;
-      return Promise.all([metadataStore.put({ ...metadata, id, createdAt: now + index }), imageStore.put(image, id)]);
+      return [metadataStore.put({ ...metadata, thumbnail, id, createdAt: now + index }), imageStore.put(image, id)];
     });
 
-    await Promise.all(putPromises);
-    await tx.done;
+    await settleTransaction(requests, tx.done);
     return ids;
   } catch (error) {
     throw new DatabaseError("Failed to add mockups", error);
@@ -170,8 +254,7 @@ export async function deleteMockup(id: string): Promise<void> {
   try {
     const db = await getDB();
     const tx = db.transaction(["mockups", "mockup_blobs"], "readwrite");
-    await Promise.all([tx.objectStore("mockups").delete(id), tx.objectStore("mockup_blobs").delete(id)]);
-    await tx.done;
+    await settleTransaction([tx.objectStore("mockups").delete(id), tx.objectStore("mockup_blobs").delete(id)], tx.done);
   } catch (error) {
     throw new DatabaseError("Failed to delete mockup", error);
   }
@@ -181,8 +264,7 @@ export async function resetMockups(): Promise<void> {
   try {
     const db = await getDB();
     const tx = db.transaction(["mockups", "mockup_blobs"], "readwrite");
-    await Promise.all([tx.objectStore("mockups").clear(), tx.objectStore("mockup_blobs").clear()]);
-    await tx.done;
+    await settleTransaction([tx.objectStore("mockups").clear(), tx.objectStore("mockup_blobs").clear()], tx.done);
   } catch (error) {
     throw new DatabaseError("Failed to reset mockups", error);
   }

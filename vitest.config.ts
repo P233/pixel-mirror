@@ -1,12 +1,10 @@
-import svelteSvg from "@poppanator/sveltekit-svg";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { svelteTesting } from "@testing-library/svelte/vite";
 import path from "path";
 import { defineConfig } from "vitest/config";
-import { svgPluginOptions } from "./svg.config";
 
 export default defineConfig({
-  plugins: [svelte(), svelteSvg(svgPluginOptions), svelteTesting()],
+  plugins: [svelte(), svelteTesting()],
   test: {
     globals: true,
     environment: "jsdom",
@@ -16,7 +14,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json", "html"],
       include: ["src/**/*.{ts,svelte}"],
-      exclude: ["src/**/*.d.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/__mocks__/**"]
+      exclude: ["src/**/*.d.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/__fixtures__/**"]
     }
   },
   resolve: {

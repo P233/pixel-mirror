@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
-    "lint": "eslint . && stylelint --fix './src/**/*.svelte'",
+    "lint": "eslint . && stylelint './src/**/*.svelte' && prettier --check .",
+    "lint:fix": "eslint --fix . && stylelint --fix './src/**/*.svelte' && prettier --write .",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -30,9 +31,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@poppanator/sveltekit-svg": "^7.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@testing-library/dom": "^10.4.1",
+    "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/svelte": "^5.4.2",
     "@tsconfig/svelte": "^5.0.8",
@@ -75,7 +75,8 @@
   },
   "files": [
     "dist",
-    "plugins"
+    "plugins",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "keywords": [
     "vite",

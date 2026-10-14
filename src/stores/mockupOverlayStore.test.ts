@@ -184,7 +184,7 @@ describe("mockupOverlayStore", () => {
       it("allows opacity adjustment in locked mode", () => {
         // Locked mode still allows opacity adjustments (per state machine design)
         const initialOpacity = mockupOverlayStore.opacity;
-        mockupOverlayStore.adjustOpacity(1);
+        mockupOverlayStore.stepOpacity(-1);
 
         expect(mockupOverlayStore.opacity).toBeLessThan(initialOpacity);
       });
@@ -196,8 +196,7 @@ describe("mockupOverlayStore", () => {
       });
 
       it("ignores alignment changes", () => {
-        mockupOverlayStore.setAlignmentX("left");
-        mockupOverlayStore.setAlignmentY("bottom");
+        mockupOverlayStore.setAlignment("bottom", "left");
 
         expect(mockupOverlayStore.alignmentX).toBe("center");
         expect(mockupOverlayStore.alignmentY).toBe("top");
@@ -359,16 +358,16 @@ describe("mockupOverlayStore", () => {
       await mockupOverlayStore.init();
     });
 
-    it("adjusts opacity up (negative direction increases)", () => {
+    it("steps opacity up", () => {
       const initial = mockupOverlayStore.opacity;
-      mockupOverlayStore.adjustOpacity(-1);
+      mockupOverlayStore.stepOpacity(1);
 
       expect(mockupOverlayStore.opacity).toBeGreaterThan(initial);
     });
 
-    it("adjusts opacity down (positive direction decreases)", () => {
+    it("steps opacity down", () => {
       const initial = mockupOverlayStore.opacity;
-      mockupOverlayStore.adjustOpacity(1);
+      mockupOverlayStore.stepOpacity(-1);
 
       expect(mockupOverlayStore.opacity).toBeLessThan(initial);
     });
@@ -376,7 +375,7 @@ describe("mockupOverlayStore", () => {
     it("clamps opacity to minimum", () => {
       // Decrease many times to hit minimum
       for (let i = 0; i < 20; i++) {
-        mockupOverlayStore.adjustOpacity(1);
+        mockupOverlayStore.stepOpacity(-1);
       }
 
       expect(mockupOverlayStore.opacity).toBe(0.1);
@@ -385,15 +384,15 @@ describe("mockupOverlayStore", () => {
     it("clamps opacity to maximum", () => {
       // Increase many times to hit maximum
       for (let i = 0; i < 20; i++) {
-        mockupOverlayStore.adjustOpacity(-1);
+        mockupOverlayStore.stepOpacity(1);
       }
 
       expect(mockupOverlayStore.opacity).toBe(0.9);
     });
 
     it("resets opacity to default", () => {
-      mockupOverlayStore.adjustOpacity(1);
-      mockupOverlayStore.adjustOpacity(1);
+      mockupOverlayStore.stepOpacity(-1);
+      mockupOverlayStore.stepOpacity(-1);
 
       mockupOverlayStore.resetOpacity();
 
@@ -401,7 +400,7 @@ describe("mockupOverlayStore", () => {
     });
 
     it("persists opacity changes", async () => {
-      mockupOverlayStore.adjustOpacity(1);
+      mockupOverlayStore.stepOpacity(-1);
 
       await flushSettings();
       expect(saveSettings).toHaveBeenLastCalledWith(
@@ -448,19 +447,6 @@ describe("mockupOverlayStore", () => {
       await mockupOverlayStore.init();
     });
 
-    it("sets horizontal alignment", () => {
-      mockupOverlayStore.setAlignmentX("left");
-      expect(mockupOverlayStore.alignmentX).toBe("left");
-
-      mockupOverlayStore.setAlignmentX("right");
-      expect(mockupOverlayStore.alignmentX).toBe("right");
-    });
-
-    it("sets vertical alignment", () => {
-      mockupOverlayStore.setAlignmentY("bottom");
-      expect(mockupOverlayStore.alignmentY).toBe("bottom");
-    });
-
     it("sets both alignments at once", () => {
       mockupOverlayStore.setAlignment("bottom", "right");
 
@@ -468,19 +454,11 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.alignmentY).toBe("bottom");
     });
 
-    it("clears alignment", () => {
-      mockupOverlayStore.setAlignment("top", "center");
-      mockupOverlayStore.clearAlignment();
-
-      expect(mockupOverlayStore.alignmentX).toBeNull();
-      expect(mockupOverlayStore.alignmentY).toBeNull();
-    });
-
     it("reports isAligned correctly", () => {
-      mockupOverlayStore.clearAlignment();
+      mockupOverlayStore.move(1, 1);
       expect(mockupOverlayStore.isAligned).toBe(false);
 
-      mockupOverlayStore.setAlignmentX("center");
+      mockupOverlayStore.setAlignment("top", "center");
       expect(mockupOverlayStore.isAligned).toBe(true);
     });
   });
@@ -499,18 +477,8 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.effectiveOpacity).toBe(mockupOverlayStore.opacity);
     });
 
-    it("isVisibleOrLocked is true for visible/locked", () => {
-      expect(mockupOverlayStore.isVisibleOrLocked).toBe(true);
-
-      mockupOverlayStore.toggleLock();
-      expect(mockupOverlayStore.isVisibleOrLocked).toBe(true);
-
-      mockupOverlayStore.enterSolidMode();
-      expect(mockupOverlayStore.isVisibleOrLocked).toBe(false);
-    });
-
     it("positionDisplay shows coordinates when not aligned", () => {
-      mockupOverlayStore.clearAlignment();
+      mockupOverlayStore.move(1, 1);
       expect(mockupOverlayStore.positionDisplay).toMatch(/x:\d+, y:\d+/);
     });
 
@@ -533,12 +501,21 @@ describe("mockupOverlayStore", () => {
       expect(mockupOverlayStore.position.y).toBe(initial.y + 20);
     });
 
-    it("clears alignment when moving", () => {
+    it("clears alignment when moving along both axes", () => {
       mockupOverlayStore.setAlignment("top", "center");
       mockupOverlayStore.move(1, 1);
 
       expect(mockupOverlayStore.alignmentX).toBeNull();
       expect(mockupOverlayStore.alignmentY).toBeNull();
+    });
+
+    it("keeps the horizontal centering when nudged vertically", () => {
+      mockupOverlayStore.setAlignment("top", "center");
+      mockupOverlayStore.move(0, 10);
+
+      expect(mockupOverlayStore.alignmentX).toBe("center");
+      expect(mockupOverlayStore.alignmentY).toBeNull();
+      expect(mockupOverlayStore.positionDisplay).toMatch(/^center, y:\d+$/);
     });
 
     it("saves moves made in one task as a single write", async () => {
@@ -629,22 +606,6 @@ describe("mockupOverlayStore", () => {
   describe("positionDisplay variations", () => {
     beforeEach(async () => {
       await mockupOverlayStore.init();
-    });
-
-    it("shows only Y alignment when X is null", () => {
-      mockupOverlayStore.clearAlignment();
-      mockupOverlayStore.setAlignmentY("top");
-
-      // alignmentX is null, alignmentY is "top", so should show just "top"
-      expect(mockupOverlayStore.positionDisplay).toBe("top");
-    });
-
-    it("shows only X alignment when Y is null", () => {
-      mockupOverlayStore.clearAlignment();
-      mockupOverlayStore.setAlignmentX("left");
-
-      // alignmentY is null, alignmentX is "left", so should show just "left"
-      expect(mockupOverlayStore.positionDisplay).toBe("left");
     });
 
     it("shows both alignments when both are set", () => {
@@ -823,7 +784,7 @@ describe("mockupOverlayStore", () => {
     });
 
     it("stays at the bottom when the document grows", () => {
-      mockupOverlayStore.setAlignmentY("bottom");
+      mockupOverlayStore.setAlignment("bottom", "center");
 
       mockupOverlayStore.setPageSize({ width: 1024, height: 3000 });
       expect(mockupOverlayStore.position.y).toBe(1500);
@@ -839,16 +800,6 @@ describe("mockupOverlayStore", () => {
       mockupOverlayStore.setPageSize({ width: 1440, height: 3000 });
 
       expect(mockupOverlayStore.position).toEqual({ x: 117, y: 5 });
-    });
-
-    it("keeps the current coordinate of an axis whose alignment is cleared", () => {
-      mockupOverlayStore.setPageSize({ width: 1024, height: 3000 });
-
-      mockupOverlayStore.setAlignmentX(null);
-      mockupOverlayStore.setPageSize({ width: 1440, height: 3000 });
-
-      expect(mockupOverlayStore.position.x).toBe(112);
-      expect(mockupOverlayStore.alignmentY).toBe("top");
     });
   });
 
@@ -999,14 +950,42 @@ describe("mockupOverlayStore", () => {
         );
       });
 
-      it("clears alignment after a drag", () => {
+      it("clears alignment after a drag along both axes", () => {
         mockupOverlayStore.setAlignment("top", "center");
 
         mockupOverlayStore.beginDrag({ x: 100, y: 100 });
+        mockupOverlayStore.dragTo({ x: 101, y: 130 });
         mockupOverlayStore.endDrag();
 
         expect(mockupOverlayStore.alignmentX).toBeNull();
         expect(mockupOverlayStore.alignmentY).toBeNull();
+      });
+
+      it("keeps the alignment of an axis the drag didn't move along", () => {
+        mockupOverlayStore.setAlignment("top", "center");
+
+        mockupOverlayStore.beginDrag({ x: 100, y: 100 });
+        mockupOverlayStore.dragTo({ x: 100, y: 130 });
+        mockupOverlayStore.endDrag();
+
+        expect(mockupOverlayStore.alignmentX).toBe("center");
+        expect(mockupOverlayStore.alignmentY).toBeNull();
+      });
+
+      it("keeps alignment after a click without movement", async () => {
+        mockupOverlayStore.setAlignment("top", "center");
+        await flushSettings();
+        vi.mocked(saveSettings).mockClear();
+
+        mockupOverlayStore.beginDrag({ x: 100, y: 100 });
+        mockupOverlayStore.dragTo({ x: 100, y: 100 });
+        mockupOverlayStore.endDrag();
+
+        expect(mockupOverlayStore.mode).toBe("visible");
+        expect(mockupOverlayStore.alignmentX).toBe("center");
+        expect(mockupOverlayStore.alignmentY).toBe("top");
+        await flushSettings();
+        expect(saveSettings).not.toHaveBeenCalled();
       });
 
       it("ignores dragTo and endDrag without a drag", async () => {
@@ -1030,6 +1009,16 @@ describe("mockupOverlayStore", () => {
 
       it("exits solid mode back to visible", () => {
         mockupOverlayStore.toggleMobileSolidMode(); // Enter
+        mockupOverlayStore.toggleMobileSolidMode(); // Exit
+
+        expect(mockupOverlayStore.mode).toBe("visible");
+      });
+
+      it("exits zoom straight back to visible (hybrid devices zoom with a mouse or pen)", () => {
+        mockupOverlayStore.toggleMobileSolidMode(); // Enter
+        mockupOverlayStore.enterZoomMode(at({ clientX: 500, clientY: 300 } as MouseEvent));
+        expect(mockupOverlayStore.mode).toBe("zoomed");
+
         mockupOverlayStore.toggleMobileSolidMode(); // Exit
 
         expect(mockupOverlayStore.mode).toBe("visible");

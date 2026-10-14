@@ -2,16 +2,14 @@
  * GridManager Component Tests
  */
 
-import { cleanup, render } from "@testing-library/svelte";
+import { type BoundFunctions, type queries } from "@testing-library/dom";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GridManager from "./GridManager.svelte";
 import { gridManagerStore } from "~/stores/gridManagerStore.svelte";
 import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
-
-// Mock SVG icons
-vi.mock("~/assets/delete-02-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/toggle-on-stroke-rounded.svg?component", () => ({ default: () => null }));
 
 // Mock stores
 vi.mock("~/stores/gridManagerStore.svelte", () => ({
@@ -78,25 +76,49 @@ const mockDockStore = dockStore as unknown as {
 };
 
 describe("GridManager component", () => {
+  const grids: LayoutGridConfig[] = [
+    {
+      id: "1",
+      width: "1200px",
+      columns: 12,
+      gutterWidth: "24px",
+      isGutterOnOutside: true,
+      position: "center",
+      createdAt: 1
+    },
+    {
+      id: "2",
+      width: "960px",
+      columns: 8,
+      gutterWidth: "16px",
+      isGutterOnOutside: false,
+      position: "left",
+      createdAt: 2
+    }
+  ];
+
   beforeEach(() => {
-    // Reset mock values
     mockManagerStore.initialized = true;
     mockManagerStore.layoutGrids = [];
-    mockManagerStore.init.mockClear();
-    mockManagerStore.toggleSpacingGrid.mockClear();
-    mockManagerStore.toggleLayoutGrid.mockClear();
-    mockManagerStore.updateSpacingGridHeight.mockClear();
-    mockManagerStore.updateSpacingGridColor.mockClear();
-    mockManagerStore.updateLayoutGridColor.mockClear();
-    mockManagerStore.setActiveLayoutGrid.mockClear();
-    mockManagerStore.add.mockClear();
-    mockManagerStore.delete.mockClear();
-    mockManagerStore.reset.mockClear();
+    for (const fn of [
+      mockManagerStore.init,
+      mockManagerStore.toggleSpacingGrid,
+      mockManagerStore.toggleLayoutGrid,
+      mockManagerStore.updateSpacingGridHeight,
+      mockManagerStore.updateSpacingGridColor,
+      mockManagerStore.updateLayoutGridColor,
+      mockManagerStore.setActiveLayoutGrid,
+      mockManagerStore.add,
+      mockManagerStore.delete,
+      mockManagerStore.reset
+    ]) {
+      fn.mockReset();
+    }
 
-    mockOverlayStore.showSpacingGrid = false;
+    mockOverlayStore.showSpacingGrid = true;
     mockOverlayStore.spacingGridHeight = "8px";
     mockOverlayStore.spacingGridColor = "rgba(255, 0, 0, 0.05)";
-    mockOverlayStore.showLayoutGrid = false;
+    mockOverlayStore.showLayoutGrid = true;
     mockOverlayStore.layoutGridColor = "rgba(0, 0, 255, 0.05)";
     mockOverlayStore.activeLayoutGridId = null;
 
@@ -107,447 +129,270 @@ describe("GridManager component", () => {
     cleanup();
   });
 
-  describe("conditional rendering", () => {
-    it("renders .container when initialized", () => {
-      mockManagerStore.initialized = true;
-      const { container } = render(GridManager);
+  const sectionOf = (title: string) =>
+    within(screen.getByRole("heading", { name: title }).closest("section") as HTMLElement);
 
-      expect(container.querySelector(".container")).toBeInTheDocument();
+  const typeInto = async (input: HTMLElement, value: string) => {
+    await fireEvent.input(input, { target: { value } });
+  };
+
+  describe("rendering", () => {
+    it("renders the panel once the store is initialized", () => {
+      expect(render(GridManager).queryByRole("region", { name: "Grid Manager" })).toBeInTheDocument();
     });
 
-    it("does not render when not initialized", () => {
+    it("renders nothing before the store is initialized", () => {
       mockManagerStore.initialized = false;
-      const { container } = render(GridManager);
 
-      expect(container.querySelector(".container")).toBeNull();
+      expect(render(GridManager).queryByRole("region", { name: "Grid Manager" })).toBeNull();
+    });
+
+    it("has no fieldsets: fields are labelled controls", () => {
+      const view = render(GridManager);
+
+      expect(view.container.querySelector("fieldset, legend")).toBeNull();
+      expect(view.getByRole("textbox", { name: "Height" })).toBeInTheDocument();
+      expect(view.getAllByRole("textbox", { name: "Color" })).toHaveLength(2);
     });
   });
 
-  describe("spacing grid section", () => {
-    it("renders Spacing Grids header", () => {
-      const { container } = render(GridManager);
+  describe("section switches", () => {
+    it("names each switch after the grid it controls, not its state", () => {
+      const view = render(GridManager);
 
-      const headers = container.querySelectorAll(".header__title");
-      expect(headers[0].textContent).toBe("Spacing Grids");
+      expect(view.getByRole("switch", { name: "Spacing Grids" })).toHaveAttribute("data-testid", "btn-toggle-spacing");
+      expect(view.getByRole("switch", { name: "Layout Grids" })).toHaveAttribute("data-testid", "btn-toggle-layout");
     });
 
-    it("toggle button has .enabled class when showSpacingGrid is true", () => {
+    it("reflects the stored state in aria-checked", () => {
       mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
+      mockOverlayStore.showLayoutGrid = false;
+      const view = render(GridManager);
 
-      const toggleBtn = container.querySelector("[data-testid='btn-toggle-spacing']");
-      expect(toggleBtn?.classList.contains("enabled")).toBe(true);
+      expect(view.getByRole("switch", { name: "Spacing Grids" })).toHaveAttribute("aria-checked", "true");
+      expect(view.getByRole("switch", { name: "Layout Grids" })).toHaveAttribute("aria-checked", "false");
     });
 
-    it("toggle button does not have .enabled class when showSpacingGrid is false", () => {
-      mockOverlayStore.showSpacingGrid = false;
-      const { container } = render(GridManager);
+    it("toggles each grid", async () => {
+      const view = render(GridManager);
 
-      const toggleBtn = container.querySelector("[data-testid='btn-toggle-spacing']");
-      expect(toggleBtn?.classList.contains("enabled")).toBe(false);
-    });
-
-    it("section content has .disabled class when showSpacingGrid is false", () => {
-      mockOverlayStore.showSpacingGrid = false;
-      const { container } = render(GridManager);
-
-      const sectionContents = container.querySelectorAll(".section__content");
-      expect(sectionContents[0].classList.contains("disabled")).toBe(true);
-    });
-
-    it("calls toggleSpacingGrid on toggle button click", () => {
-      const { container } = render(GridManager);
-
-      const toggleBtn = container.querySelector("[data-testid='btn-toggle-spacing']") as HTMLButtonElement;
-      toggleBtn.click();
+      await fireEvent.click(view.getByRole("switch", { name: "Spacing Grids" }));
+      await fireEvent.click(view.getByRole("switch", { name: "Layout Grids" }));
 
       expect(mockManagerStore.toggleSpacingGrid).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("layout grid section", () => {
-    it("renders Layout Grids header", () => {
-      const { container } = render(GridManager);
-
-      const headers = container.querySelectorAll(".header__title");
-      expect(headers[1].textContent).toBe("Layout Grids");
-    });
-
-    it("toggle button has .enabled class when showLayoutGrid is true", () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
-
-      const toggleBtn = container.querySelector("[data-testid='btn-toggle-layout']");
-      expect(toggleBtn?.classList.contains("enabled")).toBe(true);
-    });
-
-    it("calls toggleLayoutGrid on toggle button click", () => {
-      const { container } = render(GridManager);
-
-      const toggleBtn = container.querySelector("[data-testid='btn-toggle-layout']") as HTMLButtonElement;
-      toggleBtn.click();
-
       expect(mockManagerStore.toggleLayoutGrid).toHaveBeenCalledTimes(1);
     });
-  });
 
-  describe("layout grid table", () => {
-    const mockGrids: LayoutGridConfig[] = [
-      {
-        id: "1",
-        width: "1200px",
-        columns: 12,
-        gutterWidth: "24px",
-        isGutterOnOutside: true,
-        position: "center",
-        createdAt: 1000
-      },
-      {
-        id: "2",
-        width: "960px",
-        columns: 8,
-        gutterWidth: "16px",
-        isGutterOnOutside: false,
-        position: "left",
-        createdAt: 2000
+    it.each([
+      ["Spacing Grids", "showSpacingGrid"],
+      ["Layout Grids", "showLayoutGrid"]
+    ] as const)("makes the %s settings inert while the grid is off", (title, flag) => {
+      mockOverlayStore[flag] = false;
+      const view = render(GridManager);
+
+      const body = view.getByRole("heading", { name: title }).closest("section")!.querySelector(".section__body");
+      expect((body as HTMLElement & { inert: boolean }).inert).toBe(true);
+      expect(body).toHaveClass("disabled");
+    });
+
+    it("keeps the settings usable while the grid is on", () => {
+      const view = render(GridManager);
+
+      for (const body of view.container.querySelectorAll<HTMLElement & { inert: boolean }>(".section__body")) {
+        expect(body.inert).toBe(false);
       }
-    ];
-
-    it("renders correct number of grid rows", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const rows = container.querySelectorAll("tbody tr");
-      expect(rows.length).toBe(2);
-    });
-
-    it("applies .active class to active grid row", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      mockOverlayStore.activeLayoutGridId = "1";
-      const { container } = render(GridManager);
-
-      const activeRow = container.querySelector("tbody tr.active");
-      expect(activeRow).toBeInTheDocument();
-    });
-
-    it("disables delete button for active grid", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      mockOverlayStore.activeLayoutGridId = "1";
-      const { container } = render(GridManager);
-
-      const deleteBtns = container.querySelectorAll(".table__button--delete");
-      expect((deleteBtns[0] as HTMLButtonElement).disabled).toBe(true);
-    });
-
-    it("enables delete button for inactive grid", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      mockOverlayStore.activeLayoutGridId = "1";
-      const { container } = render(GridManager);
-
-      const deleteBtns = container.querySelectorAll(".table__button--delete");
-      expect((deleteBtns[1] as HTMLButtonElement).disabled).toBe(false);
-    });
-
-    it("calls setActiveLayoutGrid on row click", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const rows = container.querySelectorAll("tbody tr");
-      (rows[0] as HTMLElement).click();
-
-      expect(mockManagerStore.setActiveLayoutGrid).toHaveBeenCalledWith("1");
-    });
-
-    it("calls delete on delete button click", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      mockOverlayStore.activeLayoutGridId = "2"; // Make grid 1 deletable
-      const { container } = render(GridManager);
-
-      const deleteBtns = container.querySelectorAll(".table__button--delete");
-      (deleteBtns[0] as HTMLButtonElement).click();
-
-      expect(mockManagerStore.delete).toHaveBeenCalledWith("1");
     });
   });
 
-  describe("add grid form", () => {
-    it("renders input fields in table footer", () => {
-      const { container } = render(GridManager);
-
-      const footerInputs = container.querySelectorAll("tfoot input");
-      expect(footerInputs.length).toBe(3); // width, columns, gutter
-    });
-
-    it("sets inputmode=numeric only on columns input for mobile numeric keyboard", () => {
-      const { container } = render(GridManager);
-
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      expect(footerInputs[0].getAttribute("inputmode")).toBeNull(); // width: needs unit input
-      expect(footerInputs[1].getAttribute("inputmode")).toBe("numeric"); // columns: digits only
-      expect(footerInputs[2].getAttribute("inputmode")).toBeNull(); // gutter: needs unit input
-    });
-
-    it("renders Add button", () => {
-      const { container } = render(GridManager);
-
-      const addBtn = container.querySelector(".table__add-button");
-      expect(addBtn).toBeInTheDocument();
-    });
-
-    it("Add button is disabled when inputs are empty", () => {
-      const { container } = render(GridManager);
-
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      expect(addBtn.disabled).toBe(true);
-    });
-  });
-
-  describe("footer buttons", () => {
-    it("renders Reset Grid Settings button", () => {
-      const { container } = render(GridManager);
-
-      const resetBtn = container.querySelector("[data-testid='btn-reset']");
-      expect(resetBtn?.textContent).toContain("Reset All Settings");
-    });
-
-    it("renders Close button", () => {
-      const { container } = render(GridManager);
-
-      const closeBtn = container.querySelector("[data-testid='btn-close']");
-      expect(closeBtn?.textContent).toContain("Close");
-    });
-
-    it("calls reset on Reset button click", () => {
-      const { container } = render(GridManager);
-
-      const resetBtn = container.querySelector("[data-testid='btn-reset']") as HTMLButtonElement;
-      resetBtn.click();
-
-      expect(mockManagerStore.reset).toHaveBeenCalledTimes(1);
-    });
-
-    it("calls enterToolbar on Close button click", () => {
-      const { container } = render(GridManager);
-
-      const closeBtn = container.querySelector("[data-testid='btn-close']") as HTMLButtonElement;
-      closeBtn.click();
-
-      expect(mockDockStore.enterToolbar).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("fieldset inputs", () => {
-    it("renders spacing grid height fieldset", () => {
-      const { container } = render(GridManager);
-
-      const legends = container.querySelectorAll(".fieldset__legend");
-      expect(legends[0].textContent).toBe("Spacing Grid Height");
-    });
-
-    it("renders spacing grid color fieldset", () => {
-      const { container } = render(GridManager);
-
-      const legends = container.querySelectorAll(".fieldset__legend");
-      expect(legends[1].textContent).toBe("Spacing Grid Color");
-    });
-
-    it("renders layout grid color fieldset", () => {
-      const { container } = render(GridManager);
-
-      const legends = container.querySelectorAll(".fieldset__legend");
-      expect(legends[2].textContent).toBe("Layout Grid Color");
-    });
-
-    it("initializes input values from store", () => {
+  describe("spacing grid fields", () => {
+    it("shows the stored values", () => {
       mockOverlayStore.spacingGridHeight = "16px";
       mockOverlayStore.spacingGridColor = "rgba(0, 255, 0, 0.1)";
       mockOverlayStore.layoutGridColor = "rgba(255, 255, 0, 0.1)";
-      const { container } = render(GridManager);
+      const view = render(GridManager);
 
-      const inputs = container.querySelectorAll(".fieldset__input") as NodeListOf<HTMLInputElement>;
-      expect(inputs[0].value).toBe("16px");
-      expect(inputs[1].value).toBe("rgba(0, 255, 0, 0.1)");
-      expect(inputs[2].value).toBe("rgba(255, 255, 0, 0.1)");
+      expect(view.getByRole("textbox", { name: "Height" })).toHaveValue("16px");
+      expect(sectionOf("Spacing Grids").getByRole("textbox", { name: "Color" })).toHaveValue("rgba(0, 255, 0, 0.1)");
+      expect(sectionOf("Layout Grids").getByRole("textbox", { name: "Color" })).toHaveValue("rgba(255, 255, 0, 0.1)");
     });
 
-    it("Update button is disabled when spacing height input equals store value", () => {
-      mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
+    it("saves the height on change and on Enter", async () => {
+      const view = render(GridManager);
+      const height = view.getByRole("textbox", { name: "Height" });
 
-      const updateBtns = container.querySelectorAll(".fieldset__button") as NodeListOf<HTMLButtonElement>;
-      expect(updateBtns[0].disabled).toBe(true);
+      await typeInto(height, "12px");
+      await fireEvent.change(height);
+      expect(mockManagerStore.updateSpacingGridHeight).toHaveBeenLastCalledWith("12px");
+
+      await typeInto(height, "20px");
+      await fireEvent.keyDown(height, { key: "Enter" });
+      expect(mockManagerStore.updateSpacingGridHeight).toHaveBeenLastCalledWith("20px");
     });
 
-    it("Update button is disabled when spacing color input equals store value", () => {
-      mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
+    it("skips unchanged values and restores an emptied field", async () => {
+      const view = render(GridManager);
+      const height = view.getByRole("textbox", { name: "Height" });
 
-      const updateBtns = container.querySelectorAll(".fieldset__button") as NodeListOf<HTMLButtonElement>;
-      expect(updateBtns[1].disabled).toBe(true);
-    });
-
-    it("Update button is disabled when layout color input equals store value", () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
-
-      const updateBtns = container.querySelectorAll(".fieldset__button") as NodeListOf<HTMLButtonElement>;
-      expect(updateBtns[2].disabled).toBe(true);
-    });
-
-    it("calls updateSpacingGridHeight on Update button click", async () => {
-      mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
-
-      const input = container.querySelectorAll(".fieldset__input")[0] as HTMLInputElement;
-      input.value = "12px";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      const updateBtn = container.querySelectorAll(".fieldset__button")[0] as HTMLButtonElement;
-      updateBtn.click();
-
-      expect(mockManagerStore.updateSpacingGridHeight).toHaveBeenCalledWith("12px");
-    });
-
-    it("calls updateSpacingGridColor on Update button click", async () => {
-      mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
-
-      const input = container.querySelectorAll(".fieldset__input")[1] as HTMLInputElement;
-      input.value = "rgba(0, 0, 255, 0.1)";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      const updateBtn = container.querySelectorAll(".fieldset__button")[1] as HTMLButtonElement;
-      updateBtn.click();
-
-      expect(mockManagerStore.updateSpacingGridColor).toHaveBeenCalledWith("rgba(0, 0, 255, 0.1)");
-    });
-
-    it("calls updateLayoutGridColor on Update button click", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
-
-      const input = container.querySelectorAll(".fieldset__input")[2] as HTMLInputElement;
-      input.value = "rgba(0, 255, 0, 0.1)";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      const updateBtn = container.querySelectorAll(".fieldset__button")[2] as HTMLButtonElement;
-      updateBtn.click();
-
-      expect(mockManagerStore.updateLayoutGridColor).toHaveBeenCalledWith("rgba(0, 255, 0, 0.1)");
-    });
-
-    it("calls updateSpacingGridHeight on Enter key press", async () => {
-      mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
-
-      const input = container.querySelectorAll(".fieldset__input")[0] as HTMLInputElement;
-      input.value = "20px";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-
-      expect(mockManagerStore.updateSpacingGridHeight).toHaveBeenCalledWith("20px");
-    });
-
-    it("does not call update on Enter key if value unchanged", async () => {
-      mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
-
-      const input = container.querySelectorAll(".fieldset__input")[0] as HTMLInputElement;
-      // Value is same as store value
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await fireEvent.keyDown(height, { key: "Enter" });
+      await typeInto(height, "   ");
+      await fireEvent.change(height);
+      await tick();
 
       expect(mockManagerStore.updateSpacingGridHeight).not.toHaveBeenCalled();
+      expect(height).toHaveValue("8px");
+    });
+
+    it("marks the current height preset and applies another", async () => {
+      const view = render(GridManager);
+      const presets = within(view.getByRole("group", { name: "Height presets" }));
+
+      expect(presets.getByRole("button", { name: "8px" })).toHaveAttribute("aria-pressed", "true");
+      expect(presets.getByRole("button", { name: "16px" })).toHaveAttribute("aria-pressed", "false");
+
+      await fireEvent.click(presets.getByRole("button", { name: "16px" }));
+      expect(mockManagerStore.updateSpacingGridHeight).toHaveBeenCalledWith("16px");
     });
   });
 
-  describe("add grid form validation", () => {
-    it("Add button is enabled when all required fields are valid", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
+  describe("color fields", () => {
+    it.each([
+      ["Spacing Grids", "picker-spacing-color", "updateSpacingGridColor"],
+      ["Layout Grids", "picker-layout-color", "updateLayoutGridColor"]
+    ] as const)(
+      "saves the %s color from the text field and keeps its alpha from the picker",
+      async (title, picker, action) => {
+        const view = render(GridManager);
 
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "12";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "24";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
+        const text = sectionOf(title).getByRole("textbox", { name: "Color" });
+        await typeInto(text, "rgba(1, 2, 3, 0.1)");
+        await fireEvent.change(text);
+        expect(mockManagerStore[action]).toHaveBeenLastCalledWith("rgba(1, 2, 3, 0.1)");
 
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      expect(addBtn.disabled).toBe(false);
+        const colorInput = view.getByTestId(picker);
+        await fireEvent.input(colorInput, { target: { value: "#00ff00" } });
+        expect(mockManagerStore[action]).toHaveBeenLastCalledWith("rgba(0, 255, 0, 0.1)");
+      }
+    );
+
+    it("shows each grid color's opacity inside its field", () => {
+      render(GridManager);
+
+      expect(screen.getByRole("spinbutton", { name: "Spacing grid opacity" })).toHaveAttribute("aria-valuenow", "5");
+      expect(screen.getByRole("spinbutton", { name: "Layout grid opacity" })).toHaveAttribute("aria-valuenow", "5");
     });
 
-    it("Add button is disabled when columns is not a valid number", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
+    it("names the native color pickers", () => {
+      const view = render(GridManager);
 
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "abc";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "24";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
+      expect(view.getByLabelText("Pick spacing grid color")).toHaveAttribute("type", "color");
+      expect(view.getByLabelText("Pick layout grid color")).toHaveAttribute("type", "color");
+    });
+  });
 
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      expect(addBtn.disabled).toBe(true);
+  describe("grid list", () => {
+    it("lists each grid as a radio named by its summary", () => {
+      mockManagerStore.layoutGrids = grids;
+      const view = render(GridManager);
+
+      const radios = within(view.getByRole("radiogroup", { name: "Grids" })).getAllByRole("radio");
+      expect(radios).toHaveLength(2);
+      expect(radios[0]).toHaveAccessibleName("1200px · 12 columns · 24px gutters Center · outer gutters");
+      expect(radios[1]).toHaveAccessibleName("960px · 8 columns · 16px gutters Left · no outer gutters");
     });
 
-    it("Add button is disabled when columns is 0", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
+    it("checks the active grid only", () => {
+      mockManagerStore.layoutGrids = grids;
+      mockOverlayStore.activeLayoutGridId = "2";
+      const view = render(GridManager);
 
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "0";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "24";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      expect(addBtn.disabled).toBe(true);
+      expect(view.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).checked)).toEqual([false, true]);
     });
 
-    it("Add button is disabled when gutter is empty", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
+    it("selects a grid once when its radio is chosen", async () => {
+      mockManagerStore.layoutGrids = grids;
+      const view = render(GridManager);
 
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "12";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      // gutter remains empty
-      await new Promise((r) => setTimeout(r, 0));
+      await fireEvent.click(view.getAllByRole("radio")[0]);
 
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      expect(addBtn.disabled).toBe(true);
+      expect(mockManagerStore.setActiveLayoutGrid).toHaveBeenCalledTimes(1);
+      expect(mockManagerStore.setActiveLayoutGrid).toHaveBeenCalledWith("1");
     });
 
-    it("calls add with px suffix when width is numeric", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
+    it("deletes inactive grids; the grid in use can't be deleted", async () => {
+      mockManagerStore.layoutGrids = grids;
+      mockOverlayStore.activeLayoutGridId = "2";
+      const view = render(GridManager);
 
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "12";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "24";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
+      expect(view.getByRole("button", { name: "Delete grid 960px · 8 columns · 16px gutters" })).toBeDisabled();
+      await fireEvent.click(view.getByRole("button", { name: "Delete grid 1200px · 12 columns · 24px gutters" }));
 
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      addBtn.click();
+      expect(mockManagerStore.delete).toHaveBeenCalledWith("1");
+      expect(mockManagerStore.setActiveLayoutGrid).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("new grid form", () => {
+    const openForm = async () => {
+      await fireEvent.click(screen.getByRole("button", { name: "New grid" }));
+      await tick();
+      return within(screen.getByRole("form", { name: "New grid" }));
+    };
+
+    const fill = async (
+      form: BoundFunctions<typeof queries>,
+      values: { width: string; columns: string; gutter: string }
+    ) => {
+      await typeInto(form.getByRole("textbox", { name: "Width" }), values.width);
+      await typeInto(form.getByRole("textbox", { name: "Columns" }), values.columns);
+      await typeInto(form.getByRole("textbox", { name: "Gutter" }), values.gutter);
+    };
+
+    it("stays folded away until requested, then focuses the width field", async () => {
+      const view = render(GridManager);
+      expect(view.queryByRole("form", { name: "New grid" })).toBeNull();
+
+      const form = await openForm();
+
+      expect(form.getByRole("textbox", { name: "Width" })).toHaveFocus();
+      expect(view.queryByRole("button", { name: "New grid" })).toBeNull();
+    });
+
+    it("offers numeric input for columns only and the expected options", async () => {
+      render(GridManager);
+      const form = await openForm();
+
+      expect(form.getByRole("textbox", { name: "Width" })).not.toHaveAttribute("inputmode");
+      expect(form.getByRole("textbox", { name: "Columns" })).toHaveAttribute("inputmode", "numeric");
+      expect(form.getByRole("textbox", { name: "Gutter" })).not.toHaveAttribute("inputmode");
+      const optionsOf = (name: string) =>
+        within(form.getByRole("combobox", { name }))
+          .getAllByRole("option")
+          .map((o) => o.textContent);
+      expect(optionsOf("Outer gutters")).toEqual(["Yes", "No"]);
+      expect(optionsOf("Position")).toEqual(["Center", "Left", "Right"]);
+    });
+
+    it.each([
+      [{ width: "", columns: "12", gutter: "24" }, "empty width"],
+      [{ width: "1200", columns: "abc", gutter: "24" }, "non-numeric columns"],
+      [{ width: "1200", columns: "0", gutter: "24" }, "zero columns"],
+      [{ width: "1200", columns: "12", gutter: "" }, "empty gutter"]
+    ])("disables Add grid for %o (%s)", async (values) => {
+      render(GridManager);
+      const form = await openForm();
+
+      await fill(form, values);
+
+      expect(form.getByRole("button", { name: "Add grid" })).toBeDisabled();
+    });
+
+    it("adds a grid, defaulting bare numbers to px", async () => {
+      mockManagerStore.add.mockResolvedValue("new-id");
+      render(GridManager);
+      const form = await openForm();
+
+      await fill(form, { width: "1200", columns: "12", gutter: "24" });
+      await fireEvent.click(form.getByRole("button", { name: "Add grid" }));
 
       expect(mockManagerStore.add).toHaveBeenCalledWith({
         width: "1200px",
@@ -558,296 +403,90 @@ describe("GridManager component", () => {
       });
     });
 
-    it("calls add with original value when width has unit", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
+    it("keeps units and uses the chosen outer gutters and position", async () => {
+      mockManagerStore.add.mockResolvedValue("new-id");
+      render(GridManager);
+      const form = await openForm();
 
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "80%";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "8";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "16px";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      addBtn.click();
+      await fill(form, { width: "80%", columns: "8", gutter: "16px" });
+      const outer = form.getByRole("combobox", { name: "Outer gutters" }) as HTMLSelectElement;
+      outer.value = "false";
+      await fireEvent.change(outer);
+      const position = form.getByRole("combobox", { name: "Position" }) as HTMLSelectElement;
+      position.value = "left";
+      await fireEvent.change(position);
+      await fireEvent.click(form.getByRole("button", { name: "Add grid" }));
 
       expect(mockManagerStore.add).toHaveBeenCalledWith({
         width: "80%",
         columns: 8,
         gutterWidth: "16px",
-        isGutterOnOutside: true,
-        position: "center"
+        isGutterOnOutside: false,
+        position: "left"
       });
     });
 
-    it("clears input fields after adding grid", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      mockManagerStore.add.mockResolvedValue("new-grid-id");
-      const { container } = render(GridManager);
+    it("closes and clears the form after adding, returning focus to + New grid", async () => {
+      mockManagerStore.add.mockResolvedValue("new-id");
+      const view = render(GridManager);
+      const form = await openForm();
 
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "12";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "24";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
+      await fill(form, { width: "1200", columns: "12", gutter: "24" });
+      await fireEvent.click(form.getByRole("button", { name: "Add grid" }));
       await new Promise((r) => setTimeout(r, 0));
 
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      addBtn.click();
+      expect(view.queryByRole("form", { name: "New grid" })).toBeNull();
+      expect(view.getByRole("button", { name: "New grid" })).toHaveFocus();
+      const reopened = await openForm();
+      expect(reopened.getByRole("textbox", { name: "Width" })).toHaveValue("");
+    });
+
+    it("keeps the input when adding fails", async () => {
+      mockManagerStore.add.mockResolvedValue(undefined);
+      render(GridManager);
+      const form = await openForm();
+
+      await fill(form, { width: "abc", columns: "12", gutter: "24px" });
+      await fireEvent.click(form.getByRole("button", { name: "Add grid" }));
       await new Promise((r) => setTimeout(r, 0));
 
-      expect(footerInputs[0].value).toBe("");
-      expect(footerInputs[1].value).toBe("");
-      expect(footerInputs[2].value).toBe("");
+      expect(form.getByRole("textbox", { name: "Width" })).toHaveValue("abc");
+      expect(form.getByRole("textbox", { name: "Gutter" })).toHaveValue("24px");
+    });
+
+    it("cancels without adding", async () => {
+      const view = render(GridManager);
+      const form = await openForm();
+
+      await fill(form, { width: "1200", columns: "12", gutter: "24" });
+      await fireEvent.click(form.getByRole("button", { name: "Cancel" }));
+      await tick();
+
+      expect(view.queryByRole("form", { name: "New grid" })).toBeNull();
+      expect(mockManagerStore.add).not.toHaveBeenCalled();
     });
   });
 
-  describe("add grid form selects", () => {
-    it("renders outer gutter select with Yes/No options", () => {
-      const { container } = render(GridManager);
+  describe("footer", () => {
+    it("asks for confirmation before resetting", async () => {
+      const view = render(GridManager);
+      const reset = view.getByTestId("btn-reset");
+      expect(reset).toHaveTextContent("Reset All Settings");
 
-      const selects = container.querySelectorAll("tfoot select");
-      const gutterSelect = selects[0] as HTMLSelectElement;
-      const options = gutterSelect.querySelectorAll("option");
-      expect(options.length).toBe(2);
-      expect(options[0].textContent).toBe("Yes");
-      expect(options[1].textContent).toBe("No");
+      await fireEvent.click(reset);
+      expect(mockManagerStore.reset).not.toHaveBeenCalled();
+      expect(reset).toHaveTextContent("Confirm Reset?");
+
+      await fireEvent.click(reset);
+      expect(mockManagerStore.reset).toHaveBeenCalledTimes(1);
     });
 
-    it("renders position select with Center/Left/Right options", () => {
-      const { container } = render(GridManager);
+    it("closes the panel", async () => {
+      const view = render(GridManager);
 
-      const selects = container.querySelectorAll("tfoot select");
-      const positionSelect = selects[1] as HTMLSelectElement;
-      const options = positionSelect.querySelectorAll("option");
-      expect(options.length).toBe(3);
-      expect(options[0].textContent).toBe("Center");
-      expect(options[1].textContent).toBe("Left");
-      expect(options[2].textContent).toBe("Right");
-    });
+      await fireEvent.click(view.getByRole("button", { name: "Close" }));
 
-    it("uses selected gutter outside value when adding", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
-
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "12";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "24";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
-
-      const selects = container.querySelectorAll("tfoot select") as NodeListOf<HTMLSelectElement>;
-      selects[0].value = "false";
-      selects[0].dispatchEvent(new Event("change", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      addBtn.click();
-
-      expect(mockManagerStore.add).toHaveBeenCalledWith(
-        expect.objectContaining({
-          isGutterOnOutside: false
-        })
-      );
-    });
-
-    it("uses selected position value when adding", async () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
-
-      const footerInputs = container.querySelectorAll("tfoot input") as NodeListOf<HTMLInputElement>;
-      footerInputs[0].value = "1200";
-      footerInputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[1].value = "12";
-      footerInputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-      footerInputs[2].value = "24";
-      footerInputs[2].dispatchEvent(new Event("input", { bubbles: true }));
-
-      const selects = container.querySelectorAll("tfoot select") as NodeListOf<HTMLSelectElement>;
-      selects[1].value = "left";
-      selects[1].dispatchEvent(new Event("change", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 0));
-
-      const addBtn = container.querySelector(".table__add-button") as HTMLButtonElement;
-      addBtn.click();
-
-      expect(mockManagerStore.add).toHaveBeenCalledWith(
-        expect.objectContaining({
-          position: "left"
-        })
-      );
-    });
-  });
-
-  describe("keyboard navigation", () => {
-    const mockGrids: LayoutGridConfig[] = [
-      {
-        id: "1",
-        width: "1200px",
-        columns: 12,
-        gutterWidth: "24px",
-        isGutterOnOutside: true,
-        position: "center",
-        createdAt: 1000
-      }
-    ];
-
-    it("calls setActiveLayoutGrid on Enter key press on row", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const row = container.querySelector("tbody tr") as HTMLElement;
-      row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-
-      expect(mockManagerStore.setActiveLayoutGrid).toHaveBeenCalledWith("1");
-    });
-
-    it("calls setActiveLayoutGrid on Space key press on row", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const row = container.querySelector("tbody tr") as HTMLElement;
-      row.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
-
-      expect(mockManagerStore.setActiveLayoutGrid).toHaveBeenCalledWith("1");
-    });
-
-    it("does not call setActiveLayoutGrid on other keys", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const row = container.querySelector("tbody tr") as HTMLElement;
-      row.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
-
-      expect(mockManagerStore.setActiveLayoutGrid).not.toHaveBeenCalled();
-    });
-
-    it("row has tabindex=0 for keyboard focus", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const row = container.querySelector("tbody tr") as HTMLElement;
-      expect(row.getAttribute("tabindex")).toBe("0");
-    });
-  });
-
-  describe("table data display", () => {
-    const mockGrids: LayoutGridConfig[] = [
-      {
-        id: "1",
-        width: "1200px",
-        columns: 12,
-        gutterWidth: "24px",
-        isGutterOnOutside: true,
-        position: "center",
-        createdAt: 1000
-      },
-      {
-        id: "2",
-        width: "960px",
-        columns: 8,
-        gutterWidth: "16px",
-        isGutterOnOutside: false,
-        position: "left",
-        createdAt: 2000
-      }
-    ];
-
-    it("displays grid width correctly", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const cells = container.querySelectorAll("tbody tr:first-child td");
-      expect(cells[0].textContent).toBe("1200px");
-    });
-
-    it("displays grid columns correctly", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const cells = container.querySelectorAll("tbody tr:first-child td");
-      expect(cells[1].textContent).toBe("12");
-    });
-
-    it("displays grid gutter width correctly", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const cells = container.querySelectorAll("tbody tr:first-child td");
-      expect(cells[2].textContent).toBe("24px");
-    });
-
-    it("displays Yes for isGutterOnOutside true", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const cells = container.querySelectorAll("tbody tr:first-child td");
-      expect(cells[3].textContent).toBe("Yes");
-    });
-
-    it("displays No for isGutterOnOutside false", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const cells = container.querySelectorAll("tbody tr:nth-child(2) td");
-      expect(cells[3].textContent).toBe("No");
-    });
-
-    it("displays grid position correctly", () => {
-      mockManagerStore.layoutGrids = mockGrids;
-      const { container } = render(GridManager);
-
-      const cells = container.querySelectorAll("tbody tr:first-child td");
-      expect(cells[4].textContent).toBe("center");
-    });
-  });
-
-  describe("section disabled state", () => {
-    it("spacing section is inert when disabled", () => {
-      mockOverlayStore.showSpacingGrid = false;
-      const { container } = render(GridManager);
-
-      const sectionContents = container.querySelectorAll(".section__content") as NodeListOf<HTMLElement>;
-      expect((sectionContents[0] as unknown as { inert: boolean }).inert).toBe(true);
-    });
-
-    it("layout section is inert when disabled", () => {
-      mockOverlayStore.showLayoutGrid = false;
-      const { container } = render(GridManager);
-
-      const sectionContents = container.querySelectorAll(".section__content") as NodeListOf<HTMLElement>;
-      expect((sectionContents[1] as unknown as { inert: boolean }).inert).toBe(true);
-    });
-
-    it("spacing section is not inert when enabled", () => {
-      mockOverlayStore.showSpacingGrid = true;
-      const { container } = render(GridManager);
-
-      const sectionContents = container.querySelectorAll(".section__content") as NodeListOf<HTMLElement>;
-      expect((sectionContents[0] as unknown as { inert: boolean }).inert).toBe(false);
-    });
-
-    it("layout section is not inert when enabled", () => {
-      mockOverlayStore.showLayoutGrid = true;
-      const { container } = render(GridManager);
-
-      const sectionContents = container.querySelectorAll(".section__content") as NodeListOf<HTMLElement>;
-      expect((sectionContents[1] as unknown as { inert: boolean }).inert).toBe(false);
-    });
-
-    it("layout section content has disabled class when showLayoutGrid is false", () => {
-      mockOverlayStore.showLayoutGrid = false;
-      const { container } = render(GridManager);
-
-      const sectionContents = container.querySelectorAll(".section__content");
-      expect(sectionContents[1].classList.contains("disabled")).toBe(true);
+      expect(mockDockStore.enterToolbar).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -38,12 +38,15 @@
   let dragEnterCount = 0;
   let showDropZone = $state(false);
 
-  function hasFiles(e: DragEvent) {
-    return e.dataTransfer?.types.includes("Files") ?? false;
+  /** A file drag the tool may take: not over a host <input type="file">, which accepts files natively */
+  function isFileDragForTool(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes("Files")) return false;
+    const target = e.composedPath()[0];
+    return !(target instanceof HTMLInputElement && target.type === "file");
   }
 
   function handleGlobalDragEnter(e: DragEvent) {
-    if (!hasFiles(e)) return;
+    if (!isFileDragForTool(e)) return;
     dragEnterCount++;
     if (dragEnterCount === 1) {
       showDropZone = true;
@@ -51,7 +54,7 @@
   }
 
   function handleGlobalDragLeave(e: DragEvent) {
-    if (!hasFiles(e)) return;
+    if (!isFileDragForTool(e)) return;
     dragEnterCount--;
     if (dragEnterCount === 0) {
       showDropZone = false;
@@ -59,7 +62,8 @@
   }
 
   function handleGlobalDragOver(e: DragEvent) {
-    if (!hasFiles(e)) return;
+    // Cancelling dragover makes the page the drop target, which would bypass a native file input
+    if (!isFileDragForTool(e)) return;
     e.preventDefault();
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = "copy";
@@ -71,7 +75,7 @@
     dragEnterCount = 0;
 
     // Leave text/HTML drops alone, and drops the host page already handled (e.g. its own uploader)
-    if (!hasFiles(e) || e.defaultPrevented) return;
+    if (!isFileDragForTool(e) || e.defaultPrevented) return;
     e.preventDefault();
 
     const files = Array.from(e.dataTransfer?.files || []).filter((file) =>
@@ -133,95 +137,111 @@
   // `all` doesn't cover `direction`, so RTL pages would still flip the toolbar without it.
   :host {
     all: initial !important;
-    font-family: Arial, sans-serif !important;
+    font-family:
+      ui-sans-serif,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      Roboto,
+      sans-serif !important;
     direction: ltr !important;
   }
 
   .theme-root {
-    // Dock
-    --dock-bg: #fff;
-    --dock-fg: #000;
-    --dock-border: #000;
-    --dock-outline: rgba(255, 255, 255, 0.5);
+    --pm-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --pm-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+    // Surfaces: the floating toolbar is translucent, panels and popovers are solid
+    --pm-surface-primary: rgba(255, 255, 255, 0.9);
+    --pm-surface-elevated: #ffffff;
+    --pm-surface-subtle: #f5f5f7;
+    --pm-surface-hover: rgba(24, 24, 27, 0.05);
+    --pm-surface-active: rgba(24, 24, 27, 0.08);
+    --pm-backdrop-blur: blur(20px) saturate(180%);
+
+    // Borders (form control borders need 3:1 against their surroundings)
+    --pm-border-subtle: rgba(24, 24, 27, 0.06);
+    --pm-border-strong: rgba(24, 24, 27, 0.12);
+    --pm-border-control: #8a8a92;
 
     // Text
-    --text-primary: #000;
-    --text-secondary: #333;
+    --pm-text-primary: #18181b;
+    --pm-text-secondary: #52525b;
+    --pm-text-muted: #71717a;
 
-    // Border
-    --border-light: #eee;
-    --border-medium: #d4d4d4;
+    // Monochrome emphasis (no chromatic accent): active, selected, switched-on and focused
+    // states use black in the light theme and white in the dark one
+    --pm-accent: #18181b;
+    --pm-accent-hover: #3f3f46;
+    --pm-accent-fg: #ffffff;
+    --pm-accent-subtle: rgba(24, 24, 27, 0.1);
+    --pm-accent-text: #18181b;
+    --pm-focus-ring: #18181b;
 
-    // Input
-    --input-bg: #fff;
-    --input-text: #000;
-    --input-placeholder: #999;
-    --input-border: #d4d4d4;
+    --pm-danger: #dc2626;
+    --pm-danger-hover: #b91c1c;
+    // Lucide chevron-down for selects (see THIRD_PARTY_NOTICES.md), in --pm-text-secondary (CSS variables can't reach into a data URL)
+    --pm-select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    --pm-danger-text: #b91c1c;
+    --pm-switch-off: #d4d4d8;
 
-    // Button
-    --btn-bg: #000;
-    --btn-fg: #fff;
-    --btn-hover-bg: #333;
-    --btn-disabled-bg: #555;
+    // Elevation
+    --pm-shadow-hud: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px -4px rgba(0, 0, 0, 0.14);
+    --pm-shadow-panel: 0 2px 6px rgba(0, 0, 0, 0.05), 0 20px 48px -8px rgba(0, 0, 0, 0.2);
 
-    // Focus
-    --focus-ring: #d9daff;
-    --focus-bg: rgba(217, 218, 255, 0.2);
+    // Radii
+    --pm-radius-pill: 9999px;
+    --pm-radius-panel: 16px;
+    --pm-radius-card: 12px;
+    --pm-radius-control: 8px;
 
-    // Status
-    --color-success: #10b981;
-    --color-success-bg: #ecfdf5;
-    --color-danger: #fe0200;
+    // Primary buttons
+    --pm-button-bg: var(--pm-accent);
+    --pm-button-fg: var(--pm-accent-fg);
+    --pm-button-hover-bg: var(--pm-accent-hover);
+    --pm-button-disabled-bg: #a1a1aa;
 
-    // Mockup
-    --mockup-border: #999;
-    --mockup-border-hover: #000;
+    // Mockup cards
+    --pm-mockup-border: rgba(24, 24, 27, 0.1);
+    --pm-mockup-border-hover: rgba(24, 24, 27, 0.24);
 
-    // Alignment
-    --align-x-bg: rgba(0, 0, 255, 0.05);
-    --align-x-hover: rgba(0, 0, 255, 0.1);
-    --align-x-active: rgba(0, 0, 255, 0.2);
-    --align-y-bg: rgba(255, 0, 0, 0.05);
-    --align-y-hover: rgba(255, 0, 0, 0.1);
-    --align-y-active: rgba(255, 0, 0, 0.2);
+    color-scheme: light;
 
-    // Dark mode
     &.dark {
-      --dock-bg: #1a1a1a;
-      --dock-fg: #e8e8e8;
-      --dock-border: #4d4d4d;
-      --dock-outline: rgba(255, 255, 255, 0.1);
+      --pm-surface-primary: rgba(28, 28, 32, 0.9);
+      --pm-surface-elevated: #1c1c20;
+      --pm-surface-subtle: #232328;
+      --pm-surface-hover: rgba(255, 255, 255, 0.06);
+      --pm-surface-active: rgba(255, 255, 255, 0.1);
 
-      --text-primary: #e8e8e8;
-      --text-secondary: #999;
+      --pm-border-subtle: rgba(255, 255, 255, 0.06);
+      --pm-border-strong: rgba(255, 255, 255, 0.12);
+      --pm-border-control: #71717a;
 
-      --border-light: #3a3a3a;
-      --border-medium: #4a4a4a;
+      --pm-text-primary: #f4f4f5;
+      --pm-text-secondary: #a1a1aa;
+      --pm-text-muted: #93939b;
 
-      --input-bg: #2a2a2a;
-      --input-text: #e8e8e8;
-      --input-placeholder: #666;
-      --input-border: #4a4a4a;
+      --pm-accent: #f4f4f5;
+      --pm-accent-hover: #d4d4d8;
+      --pm-accent-fg: #18181b;
+      --pm-accent-subtle: rgba(255, 255, 255, 0.12);
+      --pm-accent-text: #fafafa;
+      --pm-focus-ring: #f4f4f5;
 
-      --btn-bg: #3a3a3a;
-      --btn-fg: #e8e8e8;
-      --btn-hover-bg: #5a5a5a;
-      --btn-disabled-bg: #6a6a6a;
+      --pm-danger-text: #f87171;
+      --pm-select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      --pm-switch-off: #3f3f46;
 
-      --focus-ring: #7a7cb8;
-      --focus-bg: rgba(122, 124, 184, 0.2);
+      --pm-shadow-hud: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -4px rgba(0, 0, 0, 0.5);
+      --pm-shadow-panel: 0 2px 8px rgba(0, 0, 0, 0.3), 0 24px 56px -8px rgba(0, 0, 0, 0.6);
 
-      --color-success-bg: rgba(16, 185, 129, 0.15);
+      --pm-button-disabled-bg: #3f3f46;
 
-      --mockup-border: #5a5a5a;
-      --mockup-border-hover: #e8e8e8;
+      --pm-mockup-border: rgba(255, 255, 255, 0.1);
+      --pm-mockup-border-hover: rgba(255, 255, 255, 0.24);
 
-      --align-x-bg: rgba(120, 170, 240, 0.2);
-      --align-x-hover: rgba(120, 170, 240, 0.3);
-      --align-x-active: rgba(120, 170, 240, 0.4);
-      --align-y-bg: rgba(240, 130, 150, 0.2);
-      --align-y-hover: rgba(240, 130, 150, 0.3);
-      --align-y-active: rgba(240, 130, 150, 0.4);
+      color-scheme: dark;
     }
   }
 
@@ -246,7 +266,7 @@
       }
 
       &:not(:disabled):active {
-        transform: scale(0.95);
+        transform: scale(0.96);
       }
     }
 
@@ -254,6 +274,17 @@
       display: block;
       color: currentColor;
       fill: none;
+    }
+
+    // `none` rather than a near-zero duration: a duration on every element would turn any property
+    // change into a transition, e.g. the page measurement that briefly collapses the mockup viewport
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition: none !important;
+        animation: none !important;
+      }
     }
   }
 </style>

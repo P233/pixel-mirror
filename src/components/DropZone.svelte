@@ -1,5 +1,5 @@
 <script lang="ts">
-  import IconUpload from "~/assets/image-upload-stroke-rounded.svg?component";
+  import Icon from "./icons/Icon.svelte";
 
   interface Props {
     visible: boolean;
@@ -12,9 +12,10 @@
   <div class="drop-zone" role="region" aria-label="Drop zone for mockup upload">
     <div class="drop-zone__card">
       <div class="drop-zone__icon">
-        <IconUpload />
+        <Icon name="upload" size={40} />
       </div>
       <p class="drop-zone__text">Drop image to set as mockup</p>
+      <span class="drop-zone__subtext">PNG, JPG, WebP, or GIF up to 10 MB</span>
     </div>
   </div>
 {/if}
@@ -28,8 +29,7 @@
     align-items: center;
     justify-content: center;
     pointer-events: none;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.32);
     animation: fade-in $transition-fast $timing-function;
 
     &__card {
@@ -37,28 +37,31 @@
       flex-direction: column;
       align-items: center;
       padding: rhythm(4) rhythm(6);
-      background: color-mix(in srgb, var(--dock-bg) 75%, transparent);
-      border: 2px dashed var(--dock-border);
-      border-radius: rhythm(2);
+      background: var(--pm-surface-elevated);
+      border: 2px dashed var(--pm-accent);
+      border-radius: var(--pm-radius-panel);
+      box-shadow: var(--pm-shadow-panel);
       animation: scale-in $transition-fast $timing-function;
     }
 
     &__icon {
       margin-bottom: rhythm(1.5);
-      color: var(--text-primary);
-
-      :global(svg) {
-        width: rhythm(6);
-        height: rhythm(6);
-      }
+      color: var(--pm-accent-text);
     }
 
     &__text {
       margin: 0;
-      font-family: "Arial", sans-serif;
+      font-family: var(--pm-font-sans);
       font-size: 15px;
-      font-weight: 500;
-      color: var(--text-primary);
+      font-weight: 600;
+      color: var(--pm-text-primary);
+    }
+
+    &__subtext {
+      margin-top: 4px;
+      font-family: var(--pm-font-sans);
+      font-size: 12px;
+      color: var(--pm-text-secondary);
     }
   }
 
@@ -74,7 +77,7 @@
   @keyframes scale-in {
     from {
       opacity: 0;
-      transform: scale(0.92);
+      transform: scale(0.94);
     }
     to {
       opacity: 1;

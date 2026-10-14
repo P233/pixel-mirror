@@ -7,7 +7,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { FileError } from "./errors";
+import { ValidationError } from "./errors";
 
 // Mock validation
 vi.mock("./validation", () => ({
@@ -38,7 +38,7 @@ describe("generateMockupBuffers", () => {
 
   describe("validation delegation", () => {
     it("returns validation errors when no valid files", async () => {
-      const validationErrors = [new FileError("Invalid file type")];
+      const validationErrors = [new ValidationError("Invalid file type")];
       validateFiles.mockReturnValue({ validFiles: [], errors: validationErrors });
 
       const result = await generateMockupBuffers([new File(["test"], "test.txt")]);
@@ -68,7 +68,7 @@ describe("generateMockupBuffers", () => {
 
   describe("error accumulation", () => {
     it("includes validation errors in final result", async () => {
-      const validationError = new FileError("File too large");
+      const validationError = new ValidationError("File too large");
       validateFiles.mockReturnValue({ validFiles: [], errors: [validationError] });
 
       const result = await generateMockupBuffers([new File(["test"], "large.png")]);
@@ -77,7 +77,7 @@ describe("generateMockupBuffers", () => {
     });
 
     it("returns multiple validation errors", async () => {
-      const errors = [new FileError("Error 1"), new FileError("Error 2"), new FileError("Error 3")];
+      const errors = [new ValidationError("Error 1"), new ValidationError("Error 2"), new ValidationError("Error 3")];
       validateFiles.mockReturnValue({ validFiles: [], errors });
 
       const result = await generateMockupBuffers([]);

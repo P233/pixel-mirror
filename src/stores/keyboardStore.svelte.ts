@@ -3,8 +3,8 @@
  *
  * This store manages all keyboard events in one place, providing:
  * - State-aware event handling (respects app mode/state)
- * - Proper cleanup on window blur/visibility change
- * - Modifier key tracking (Control, Shift, etc.)
+ * - Held keys (Control for wheel opacity, Space for solid mode) released on keyup,
+ *   window blur or the tab being hidden; keyup is handled in every dock mode
  * - Prevention of event conflicts between components
  *
  * Event binding follows these rules:
@@ -13,11 +13,9 @@
  * - Events are disabled when mockup overlay is hidden
  */
 
+import { isTypingInField } from "~/platform/typing";
 import { dockStore } from "./dockStore.svelte";
 import { mockupOverlayStore } from "./mockupOverlayStore.svelte";
-
-// Tags that need keyboard input (exclude BUTTON - we handle space key ourselves)
-const INPUT_TAGS = new Set(["INPUT", "SELECT", "TEXTAREA"]);
 
 // Arrow key deltas for movement
 const ARROW_KEY_DELTAS: Record<string, [number, number]> = {
@@ -28,9 +26,8 @@ const ARROW_KEY_DELTAS: Record<string, [number, number]> = {
 };
 
 function createKeyboardStore() {
-  // Track modifier key states
+  // Track held keys
   let isControlPressed = $state(false);
-  let isShiftPressed = $state(false);
   let isSpacePressed = $state(false);
 
   // Track if keyboard manager is initialized
@@ -47,28 +44,6 @@ function createKeyboardStore() {
    */
   function shouldHandleMockupEvents(): boolean {
     return dockStore.mode === "toolbar" && !mockupOverlayStore.isHidden && !!mockupOverlayStore.activeMockupUrl;
-  }
-
-  function isEditable(target: EventTarget | null | undefined): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    return INPUT_TAGS.has(target.tagName) || target.isContentEditable;
-  }
-
-  /**
-   * Check if the key event is meant for an element that needs keyboard input
-   * (input, textarea, select, or contentEditable), including inside open shadow roots
-   */
-  function isFocusOnInputElement(e: KeyboardEvent): boolean {
-    if (isEditable(e.composedPath()[0])) return true;
-
-    let activeElement = document.activeElement;
-
-    // Traverse Shadow DOM to find the actual focused element
-    while (activeElement?.shadowRoot?.activeElement) {
-      activeElement = activeElement.shadowRoot.activeElement;
-    }
-
-    return isEditable(activeElement);
   }
 
   /**
@@ -89,7 +64,8 @@ function createKeyboardStore() {
     if (mode !== "visible" && mode !== "locked") return;
 
     e.preventDefault();
-    mockupOverlayStore.adjustOpacity(e.deltaY > 0 ? -1 : 1);
+    // Scrolling down makes the mockup more opaque
+    mockupOverlayStore.stepOpacity(e.deltaY > 0 ? 1 : -1);
   }
 
   /**
@@ -111,8 +87,7 @@ function createKeyboardStore() {
   }
 
   /**
-   * Reset all modifier states and cleanup temporary listeners
-   * Called on window blur, visibility change, etc.
+   * Release held keys whose keyup may never arrive (window blur, hidden tab, cleanup)
    */
   function resetModifierStates() {
     if (isControlPressed) {
@@ -124,8 +99,6 @@ function createKeyboardStore() {
       isSpacePressed = false;
       mockupOverlayStore.exitSolidMode();
     }
-
-    isShiftPressed = false;
   }
 
   /**
@@ -133,20 +106,23 @@ function createKeyboardStore() {
    */
   function handleKeyDown(e: KeyboardEvent) {
     // Skip if focus is on input elements that need keyboard input
-    if (isFocusOnInputElement(e)) return;
+    if (isTypingInField(e)) return;
 
-    // Track Control/Shift regardless of mockup state (for global shortcuts)
-    switch (e.key) {
-      case "Control":
-        if (!isControlPressed) {
-          isControlPressed = true;
-          attachWheelListener();
-        }
-        return;
+    // Track Control regardless of mockup state, for Ctrl+wheel opacity
+    if (e.key === "Control") {
+      if (!isControlPressed) {
+        isControlPressed = true;
+        attachWheelListener();
+      }
+      return;
+    }
 
-      case "Shift":
-        isShiftPressed = true;
-        return;
+    // Allow Escape to close manager panels when not focused in an input
+    if (dockStore.mode !== "toolbar") {
+      if (e.key === "Escape" && !isReservedForHost(e)) {
+        dockStore.enterToolbar();
+      }
+      return;
     }
 
     // Below events require mockup overlay to be active (toolbar mode)
@@ -169,8 +145,8 @@ function createKeyboardStore() {
         break;
 
       case "Escape":
-        // Escape: toggle lock (only in visible/locked mode)
-        if (mode === "visible" || mode === "locked") {
+        // Escape: toggle lock (only in visible/locked mode); holding the key must not flip it repeatedly
+        if (!e.repeat && (mode === "visible" || mode === "locked")) {
           mockupOverlayStore.toggleLock();
         }
         break;
@@ -208,10 +184,6 @@ function createKeyboardStore() {
           detachWheelListener();
         }
         break;
-
-      case "Shift":
-        isShiftPressed = false;
-        break;
     }
   }
 
@@ -227,9 +199,6 @@ function createKeyboardStore() {
   return {
     get isControlPressed() {
       return isControlPressed;
-    },
-    get isShiftPressed() {
-      return isShiftPressed;
     },
     get isSpacePressed() {
       return isSpacePressed;
@@ -267,13 +236,7 @@ function createKeyboardStore() {
       // Cleanup any remaining listeners
       detachWheelListener();
       resetModifierStates();
-    },
-
-    /**
-     * Manually reset modifier states
-     * Useful when app state changes significantly
-     */
-    resetModifierStates
+    }
   };
 }
 

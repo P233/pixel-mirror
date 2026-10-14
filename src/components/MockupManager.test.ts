@@ -8,10 +8,6 @@ import MockupManager from "./MockupManager.svelte";
 import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
 
-// Mock SVG icons
-vi.mock("~/assets/delete-02-stroke-rounded.svg?component", () => ({ default: () => null }));
-vi.mock("~/assets/image-upload-stroke-rounded.svg?component", () => ({ default: () => null }));
-
 // Mock stores
 vi.mock("~/stores/mockupManagerStore.svelte", () => ({
   mockupManagerStore: {
@@ -21,6 +17,9 @@ vi.mock("~/stores/mockupManagerStore.svelte", () => ({
       filename: string;
       mimeType: string;
       thumbnail: Blob;
+      width?: number;
+      height?: number;
+      fileSize?: number;
     }>,
     activeMockupId: null as string | null,
     init: vi.fn(),
@@ -32,13 +31,12 @@ vi.mock("~/stores/mockupManagerStore.svelte", () => ({
 }));
 
 vi.mock("~/stores/dockStore.svelte", () => ({
-  DOCK_TRANSITION_DURATION: 200,
   dockStore: {
     enterToolbar: vi.fn()
   }
 }));
 
-// Get typed references to mocks (use `as unknown as` to bypass type checking for mocked modules)
+// Get typed references to mocks
 const mockManagerStore = mockupManagerStore as unknown as {
   initialized: boolean;
   mockups: Array<{
@@ -46,6 +44,9 @@ const mockManagerStore = mockupManagerStore as unknown as {
     filename: string;
     mimeType: string;
     thumbnail: Blob;
+    width?: number;
+    height?: number;
+    fileSize?: number;
   }>;
   activeMockupId: string | null;
   init: ReturnType<typeof vi.fn>;
@@ -61,7 +62,6 @@ const mockDockStore = dockStore as unknown as {
 
 describe("MockupManager component", () => {
   beforeEach(() => {
-    // Reset mock values
     mockManagerStore.initialized = true;
     mockManagerStore.mockups = [];
     mockManagerStore.activeMockupId = null;
@@ -171,6 +171,24 @@ describe("MockupManager component", () => {
       const previewBtn = container.querySelector(".mockup__preview") as HTMLButtonElement;
       expect(previewBtn.disabled).toBe(true);
     });
+
+    it("renders filename and dimensions metadata on mockup cards", () => {
+      mockManagerStore.mockups = [
+        {
+          id: "1",
+          filename: "hero-desktop.png",
+          mimeType: "image/png",
+          thumbnail: new Blob(["x"], { type: "image/png" }),
+          width: 1440,
+          height: 900,
+          fileSize: 204800
+        }
+      ];
+      const { container } = render(MockupManager);
+
+      expect(container.querySelector(".mockup__filename")?.textContent).toBe("hero-desktop.png");
+      expect(container.querySelector(".mockup__details")?.textContent).toBe("1440×900 · 200 KB");
+    });
   });
 
   describe("footer buttons", () => {
@@ -208,7 +226,7 @@ describe("MockupManager component", () => {
   });
 
   describe("button clicks", () => {
-    it("calls clear on Clear Mockups button click", () => {
+    it("uses 2-step confirmation before calling clear on Clear Mockups button click", async () => {
       mockManagerStore.mockups = [
         { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
@@ -216,7 +234,12 @@ describe("MockupManager component", () => {
 
       const clearBtn = container.querySelector("[data-testid='btn-clear']") as HTMLButtonElement;
       clearBtn.click();
+      await new Promise((r) => setTimeout(r, 0));
 
+      expect(mockManagerStore.clear).not.toHaveBeenCalled();
+      expect(clearBtn.textContent).toContain("Confirm Clear?");
+
+      clearBtn.click();
       expect(mockManagerStore.clear).toHaveBeenCalledTimes(1);
     });
 
@@ -264,7 +287,6 @@ describe("MockupManager component", () => {
       const input = container.querySelector("input[type='file']") as HTMLInputElement;
       const file = new File(["test"], "test.png", { type: "image/png" });
 
-      // Create a mock FileList
       Object.defineProperty(input, "files", {
         value: [file],
         writable: true
@@ -281,17 +303,14 @@ describe("MockupManager component", () => {
       const input = container.querySelector("input[type='file']") as HTMLInputElement;
       const file = new File(["test"], "test.png", { type: "image/png" });
 
-      // Set up input with files
       Object.defineProperty(input, "files", {
         value: [file],
         writable: true,
         configurable: true
       });
 
-      // The input value is set to "" by the handler to allow selecting the same file again
       input.dispatchEvent(new Event("change", { bubbles: true }));
 
-      // After the handler runs, value should be empty string
       expect(input.value).toBe("");
     });
 
@@ -312,15 +331,7 @@ describe("MockupManager component", () => {
   });
 
   describe("mockup selection", () => {
-    beforeEach(() => {
-      vi.useFakeTimers();
-    });
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it("calls enterToolbar when selecting a mockup", () => {
+    it("immediately selects mockup and returns to toolbar", () => {
       mockManagerStore.mockups = [
         { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
       ];
@@ -329,27 +340,9 @@ describe("MockupManager component", () => {
 
       const previewBtn = container.querySelector(".mockup__preview") as HTMLButtonElement;
       previewBtn.click();
-
-      expect(mockDockStore.enterToolbar).toHaveBeenCalledTimes(1);
-    });
-
-    it("calls select after DOCK_TRANSITION_DURATION", async () => {
-      mockManagerStore.mockups = [
-        { id: "1", filename: "test1.png", mimeType: "image/png", thumbnail: new Blob(["x"], { type: "image/png" }) }
-      ];
-      mockManagerStore.activeMockupId = null;
-      const { container } = render(MockupManager);
-
-      const previewBtn = container.querySelector(".mockup__preview") as HTMLButtonElement;
-      previewBtn.click();
-
-      // Initially not called
-      expect(mockManagerStore.select).not.toHaveBeenCalled();
-
-      // Advance timers past DOCK_TRANSITION_DURATION (200ms)
-      vi.advanceTimersByTime(200);
 
       expect(mockManagerStore.select).toHaveBeenCalledWith("1");
+      expect(mockDockStore.enterToolbar).toHaveBeenCalledTimes(1);
     });
   });
 

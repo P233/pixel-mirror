@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Mock dockStore
 vi.mock("./dockStore.svelte", () => ({
   dockStore: {
-    mode: "toolbar" as "toolbar" | "mockups" | "grids"
+    mode: "toolbar" as "toolbar" | "mockups" | "grids",
+    enterToolbar: vi.fn()
   }
 }));
 
@@ -19,7 +20,7 @@ vi.mock("./mockupOverlayStore.svelte", () => ({
     isHidden: false,
     activeMockupUrl: "blob:mockup" as string | null,
     mode: "visible" as "visible" | "locked" | "dragging" | "solid" | "zoomed",
-    adjustOpacity: vi.fn(),
+    stepOpacity: vi.fn(),
     enterSolidMode: vi.fn(),
     exitSolidMode: vi.fn(),
     toggleLock: vi.fn(),
@@ -30,12 +31,12 @@ vi.mock("./mockupOverlayStore.svelte", () => ({
 
 describe("keyboardStore", () => {
   let keyboardStore: typeof import("./keyboardStore.svelte").keyboardStore;
-  let dockStore: { mode: "toolbar" | "mockups" | "grids" };
+  let dockStore: { mode: "toolbar" | "mockups" | "grids"; enterToolbar: ReturnType<typeof vi.fn> };
   let mockupOverlayStore: {
     isHidden: boolean;
     activeMockupUrl: string | null;
     mode: "visible" | "locked" | "dragging" | "solid" | "zoomed";
-    adjustOpacity: ReturnType<typeof vi.fn>;
+    stepOpacity: ReturnType<typeof vi.fn>;
     enterSolidMode: ReturnType<typeof vi.fn>;
     exitSolidMode: ReturnType<typeof vi.fn>;
     toggleLock: ReturnType<typeof vi.fn>;
@@ -55,10 +56,11 @@ describe("keyboardStore", () => {
 
     // Reset mock state
     dockStore.mode = "toolbar";
+    dockStore.enterToolbar.mockReset();
     mockupOverlayStore.isHidden = false;
     mockupOverlayStore.activeMockupUrl = "blob:mockup";
     mockupOverlayStore.mode = "visible";
-    mockupOverlayStore.adjustOpacity.mockReset();
+    mockupOverlayStore.stepOpacity.mockReset();
     mockupOverlayStore.enterSolidMode.mockReset();
     mockupOverlayStore.exitSolidMode.mockReset();
     mockupOverlayStore.toggleLock.mockReset();
@@ -77,7 +79,6 @@ describe("keyboardStore", () => {
   describe("initial state", () => {
     it("has all modifier keys as false", () => {
       expect(keyboardStore.isControlPressed).toBe(false);
-      expect(keyboardStore.isShiftPressed).toBe(false);
       expect(keyboardStore.isSpacePressed).toBe(false);
     });
   });
@@ -188,25 +189,6 @@ describe("keyboardStore", () => {
     });
   });
 
-  describe("Shift key handling", () => {
-    beforeEach(() => {
-      keyboardStore.init();
-    });
-
-    it("tracks Shift key press", () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
-
-      expect(keyboardStore.isShiftPressed).toBe(true);
-    });
-
-    it("tracks Shift key release", () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
-      window.dispatchEvent(new KeyboardEvent("keyup", { key: "Shift" }));
-
-      expect(keyboardStore.isShiftPressed).toBe(false);
-    });
-  });
-
   describe("Space key handling", () => {
     beforeEach(() => {
       keyboardStore.init();
@@ -276,6 +258,16 @@ describe("keyboardStore", () => {
       expect(mockupOverlayStore.toggleLock).toHaveBeenCalled();
     });
 
+    it("ignores auto-repeated Escape while the key is held", () => {
+      mockupOverlayStore.mode = "visible";
+
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", repeat: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", repeat: true }));
+
+      expect(mockupOverlayStore.toggleLock).toHaveBeenCalledTimes(1);
+    });
+
     it("toggles lock on Escape in locked mode", () => {
       mockupOverlayStore.mode = "locked";
 
@@ -289,6 +281,15 @@ describe("keyboardStore", () => {
 
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
 
+      expect(mockupOverlayStore.toggleLock).not.toHaveBeenCalled();
+    });
+
+    it("closes manager panel and returns to toolbar when Escape is pressed in manager mode", () => {
+      dockStore.mode = "mockups";
+
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
+      expect(dockStore.enterToolbar).toHaveBeenCalledTimes(1);
       expect(mockupOverlayStore.toggleLock).not.toHaveBeenCalled();
     });
   });
@@ -352,24 +353,24 @@ describe("keyboardStore", () => {
       keyboardStore.init();
     });
 
-    it("adjusts opacity on wheel when Control is pressed", () => {
+    it("makes the mockup more opaque on scroll down with Control pressed", () => {
       mockupOverlayStore.mode = "visible";
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
 
       const wheelEvent = new WheelEvent("wheel", { deltaY: 100 });
       window.dispatchEvent(wheelEvent);
 
-      expect(mockupOverlayStore.adjustOpacity).toHaveBeenCalledWith(-1);
+      expect(mockupOverlayStore.stepOpacity).toHaveBeenCalledWith(1);
     });
 
-    it("adjusts opacity in positive direction on scroll up", () => {
+    it("makes the mockup more transparent on scroll up", () => {
       mockupOverlayStore.mode = "visible";
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
 
       const wheelEvent = new WheelEvent("wheel", { deltaY: -100 });
       window.dispatchEvent(wheelEvent);
 
-      expect(mockupOverlayStore.adjustOpacity).toHaveBeenCalledWith(1);
+      expect(mockupOverlayStore.stepOpacity).toHaveBeenCalledWith(-1);
     });
 
     it("adjusts opacity in locked mode", () => {
@@ -379,7 +380,7 @@ describe("keyboardStore", () => {
       const wheelEvent = new WheelEvent("wheel", { deltaY: 100 });
       window.dispatchEvent(wheelEvent);
 
-      expect(mockupOverlayStore.adjustOpacity).toHaveBeenCalled();
+      expect(mockupOverlayStore.stepOpacity).toHaveBeenCalled();
     });
 
     it("does not adjust opacity in other modes", () => {
@@ -389,7 +390,7 @@ describe("keyboardStore", () => {
       const wheelEvent = new WheelEvent("wheel", { deltaY: 100 });
       window.dispatchEvent(wheelEvent);
 
-      expect(mockupOverlayStore.adjustOpacity).not.toHaveBeenCalled();
+      expect(mockupOverlayStore.stepOpacity).not.toHaveBeenCalled();
     });
   });
 
@@ -500,38 +501,40 @@ describe("keyboardStore", () => {
     });
   });
 
-  describe("resetModifierStates", () => {
+  describe("releasing held keys", () => {
     beforeEach(() => {
       keyboardStore.init();
     });
 
-    it("resets Control key state", () => {
+    it("releases Control on window blur", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
       expect(keyboardStore.isControlPressed).toBe(true);
 
-      keyboardStore.resetModifierStates();
+      window.dispatchEvent(new Event("blur"));
 
       expect(keyboardStore.isControlPressed).toBe(false);
     });
 
-    it("resets Space key state and exits solid mode", () => {
+    it("releases Space and exits solid mode on window blur", () => {
       mockupOverlayStore.mode = "visible";
       window.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
       expect(keyboardStore.isSpacePressed).toBe(true);
 
-      keyboardStore.resetModifierStates();
+      window.dispatchEvent(new Event("blur"));
 
       expect(keyboardStore.isSpacePressed).toBe(false);
       expect(mockupOverlayStore.exitSolidMode).toHaveBeenCalled();
     });
 
-    it("resets Shift key state", () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift" }));
-      expect(keyboardStore.isShiftPressed).toBe(true);
+    it("releases Space on keyup even after the dock left toolbar mode", () => {
+      mockupOverlayStore.mode = "visible";
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
+      dockStore.mode = "mockups";
 
-      keyboardStore.resetModifierStates();
+      window.dispatchEvent(new KeyboardEvent("keyup", { key: " " }));
 
-      expect(keyboardStore.isShiftPressed).toBe(false);
+      expect(keyboardStore.isSpacePressed).toBe(false);
+      expect(mockupOverlayStore.exitSolidMode).toHaveBeenCalled();
     });
 
     it("is called on window blur", () => {

@@ -120,102 +120,23 @@ describe("device detection", () => {
   });
 
   describe("input type tracking", () => {
-    it("should return null initially", async () => {
-      const { getLastInputType, resetInputType } = await import("./device");
-
-      resetInputType(); // Ensure clean state
-      expect(getLastInputType()).toBe(null);
-    });
-
-    it("should track touch input type", async () => {
-      const { getLastInputType, isLastInputTouch, isLastInputMouse, updateInputType, resetInputType } =
-        await import("./device");
+    it("reports no touch input before any pointer event", async () => {
+      const { isLastInputTouch, resetInputType } = await import("./device");
 
       resetInputType();
+      expect(isLastInputTouch()).toBe(false);
+    });
 
-      // Simulate touch input
-      const touchEvent = { pointerType: "touch" } as PointerEvent;
-      updateInputType(touchEvent);
+    it("follows the pointer type of the latest pointerdown", async () => {
+      const { initInputTypeTracking, isLastInputTouch, resetInputType } = await import("./device");
+      resetInputType();
+      initInputTypeTracking();
 
-      expect(getLastInputType()).toBe("touch");
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "touch", bubbles: true }));
       expect(isLastInputTouch()).toBe(true);
-      expect(isLastInputMouse()).toBe(false);
-    });
 
-    it("should track mouse input type", async () => {
-      const { getLastInputType, isLastInputTouch, isLastInputMouse, updateInputType, resetInputType } =
-        await import("./device");
-
-      resetInputType();
-
-      // Simulate mouse input
-      const mouseEvent = { pointerType: "mouse" } as PointerEvent;
-      updateInputType(mouseEvent);
-
-      expect(getLastInputType()).toBe("mouse");
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "pen", bubbles: true }));
       expect(isLastInputTouch()).toBe(false);
-      expect(isLastInputMouse()).toBe(true);
-    });
-
-    it("should track pen input type", async () => {
-      const { getLastInputType, isLastInputTouch, isLastInputMouse, updateInputType, resetInputType } =
-        await import("./device");
-
-      resetInputType();
-
-      // Simulate pen input
-      const penEvent = { pointerType: "pen" } as PointerEvent;
-      updateInputType(penEvent);
-
-      expect(getLastInputType()).toBe("pen");
-      expect(isLastInputTouch()).toBe(false);
-      expect(isLastInputMouse()).toBe(false);
-    });
-
-    it("should update when input type changes", async () => {
-      const { getLastInputType, updateInputType, resetInputType } = await import("./device");
-
-      resetInputType();
-
-      // Start with touch
-      updateInputType({ pointerType: "touch" } as PointerEvent);
-      expect(getLastInputType()).toBe("touch");
-
-      // Switch to mouse
-      updateInputType({ pointerType: "mouse" } as PointerEvent);
-      expect(getLastInputType()).toBe("mouse");
-
-      // Switch back to touch
-      updateInputType({ pointerType: "touch" } as PointerEvent);
-      expect(getLastInputType()).toBe("touch");
-    });
-
-    it("should update from touch event helper", async () => {
-      const { getLastInputType, updateInputTypeFromTouch, resetInputType } = await import("./device");
-
-      resetInputType();
-
-      updateInputTypeFromTouch();
-      expect(getLastInputType()).toBe("touch");
-    });
-
-    it("should update from mouse event helper", async () => {
-      const { getLastInputType, updateInputTypeFromMouse, resetInputType } = await import("./device");
-
-      resetInputType();
-
-      updateInputTypeFromMouse();
-      expect(getLastInputType()).toBe("mouse");
-    });
-
-    it("should reset to null with resetInputType", async () => {
-      const { getLastInputType, updateInputType, resetInputType } = await import("./device");
-
-      updateInputType({ pointerType: "touch" } as PointerEvent);
-      expect(getLastInputType()).toBe("touch");
-
-      resetInputType();
-      expect(getLastInputType()).toBe(null);
     });
   });
 

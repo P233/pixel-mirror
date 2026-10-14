@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ValidationError } from "~/utils/errors";
 
 // We need to test the store factory function behavior
 // Since toastStore is a singleton, we'll test its public API
@@ -7,11 +6,15 @@ import { ValidationError } from "~/utils/errors";
 describe("toastStore", () => {
   // Import fresh for each test
   let toastStore: typeof import("./toastStore.svelte").toastStore;
+  // Error classes from the same fresh module graph as the store, so instanceof checks hold
+  let DatabaseError: typeof import("~/utils/errors").DatabaseError;
+  let ValidationError: typeof import("~/utils/errors").ValidationError;
 
   beforeEach(async () => {
     // Reset module state
     vi.resetModules();
     const module = await import("./toastStore.svelte");
+    ({ DatabaseError, ValidationError } = await import("~/utils/errors"));
     toastStore = module.toastStore;
     toastStore.clear();
   });
@@ -35,11 +38,29 @@ describe("toastStore", () => {
     it("sets error message from ValidationError with details", () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      toastStore.showError(new ValidationError("Validation failed", "Field is required"));
+      const error = new ValidationError("Validation failed", "Field is required");
+      toastStore.showError(error);
 
       expect(toastStore.errorMessage).toBe("Validation failed");
-      // Details are passed to console.error, but may be empty string if undefined
-      expect(consoleSpy).toHaveBeenCalledWith("[PixelMirror]", "Validation failed", expect.any(String));
+      expect(consoleSpy).toHaveBeenCalledWith("[PixelMirror]", "Validation failed", "Field is required", error);
+      consoleSpy.mockRestore();
+    });
+
+    it("logs the original error so its cause stays visible", () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const quotaError = new Error("QuotaExceededError");
+      const error = new DatabaseError("Failed to add mockups", quotaError);
+
+      toastStore.showError(error, "Failed to upload mockups");
+
+      expect(toastStore.errorMessage).toBe("Failed to upload mockups: Failed to add mockups");
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "[PixelMirror]",
+        "Failed to upload mockups: Failed to add mockups",
+        "",
+        error
+      );
+      expect((consoleSpy.mock.calls[0][3] as Error).cause).toBe(quotaError);
       consoleSpy.mockRestore();
     });
 
@@ -76,9 +97,10 @@ describe("toastStore", () => {
     it("logs error to console", () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      toastStore.showError(new Error("Console test"));
+      const error = new Error("Console test");
+      toastStore.showError(error);
 
-      expect(consoleSpy).toHaveBeenCalledWith("[PixelMirror]", "Console test", "");
+      expect(consoleSpy).toHaveBeenCalledWith("[PixelMirror]", "Console test", "", error);
       consoleSpy.mockRestore();
     });
   });

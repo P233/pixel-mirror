@@ -19,7 +19,9 @@ vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
     mode: "visible" as OverlayMode,
     isDragging: false,
     isZoomPanning: false,
+    isSolidOrZoomed: false,
     mockupSize: { width: 800, height: 1500 },
+    pageSize: { width: 1024, height: 3000 },
     init: vi.fn(),
     setPageSize: vi.fn(),
     beginDrag: vi.fn(),
@@ -51,7 +53,11 @@ const dock = dockStore as { mode: DockMode };
 
 const renderOverlay = () => {
   const result = render(MockupOverlay);
-  return { ...result, img: () => result.container.querySelector<HTMLImageElement>(".mockup-overlay") };
+  return {
+    ...result,
+    viewport: () => result.container.querySelector<HTMLDivElement>(".mockup-viewport"),
+    img: () => result.container.querySelector<HTMLImageElement>(".mockup-overlay")
+  };
 };
 
 describe("MockupOverlay component", () => {
@@ -66,7 +72,9 @@ describe("MockupOverlay component", () => {
       mode: "visible",
       isDragging: false,
       isZoomPanning: false,
-      mockupSize: { width: 800, height: 1500 }
+      isSolidOrZoomed: false,
+      mockupSize: { width: 800, height: 1500 },
+      pageSize: { width: 1024, height: 3000 }
     });
     dock.mode = "toolbar";
   });
@@ -76,34 +84,42 @@ describe("MockupOverlay component", () => {
   });
 
   describe("conditional rendering", () => {
-    it("renders the image when visible with a mockup", () => {
-      const { img } = renderOverlay();
+    it("renders the image inside a clipping viewport when visible with a mockup", () => {
+      const { viewport, img } = renderOverlay();
 
+      expect(viewport()).toBeInTheDocument();
+      expect(viewport()?.style.height).toBe("3000px");
       expect(img()).toBeInTheDocument();
+      expect(viewport()?.contains(img())).toBe(true);
       expect(img()?.getAttribute("src")).toBe("blob:test-url");
     });
 
     it("renders nothing when hidden", () => {
       store.isHidden = true;
-      const { container } = renderOverlay();
+      const { viewport, img } = renderOverlay();
 
-      expect(container.querySelector(".mockup-container")).toBeNull();
+      expect(viewport()).toBeNull();
+      expect(img()).toBeNull();
     });
 
     it("renders nothing without a mockup", () => {
       store.activeMockupUrl = null;
-      const { container } = renderOverlay();
+      const { viewport, img } = renderOverlay();
 
-      expect(container.querySelector(".mockup-container")).toBeNull();
+      expect(viewport()).toBeNull();
+      expect(img()).toBeNull();
     });
   });
 
   describe("style bindings", () => {
-    it("applies transform with position and scale", () => {
-      store.position = { x: 50, y: 75 };
-      store.scale = 0.5;
+    it("applies transform with position and scale while keeping viewport bounded to host page height", () => {
+      store.position = { x: -200, y: -100 };
+      store.scale = 2;
+      store.pageSize = { width: 1024, height: 2400 };
 
-      expect(renderOverlay().img()?.style.transform).toBe("translate3d(50px, 75px, 0) scale(0.5)");
+      const { viewport, img } = renderOverlay();
+      expect(img()?.style.transform).toBe("translate3d(-200px, -100px, 0) scale(2)");
+      expect(viewport()?.style.height).toBe("2400px");
     });
 
     it("applies the effective opacity", () => {
@@ -153,10 +169,15 @@ describe("MockupOverlay component", () => {
       expect(renderOverlay().img()?.style.transition).toBe("transform 0.2s ease-out");
     });
 
-    it("lets pointer events through only in toolbar mode", () => {
+    it("lets pointer events through to the host page when locked or in manager mode", () => {
       expect(renderOverlay().img()?.style.pointerEvents).toBe("auto");
       cleanup();
 
+      store.mode = "locked";
+      expect(renderOverlay().img()?.style.pointerEvents).toBe("none");
+      cleanup();
+
+      store.mode = "visible";
       dock.mode = "mockups";
       const { img } = renderOverlay();
       expect(img()?.style.pointerEvents).toBe("none");
@@ -171,15 +192,24 @@ describe("MockupOverlay component", () => {
   });
 
   describe("lifecycle", () => {
-    it("reports the page size to the store on mount and on resize, until destroyed", () => {
+    it("reports the page size to the store on mount and on resize, collapsing the viewport during measurement", () => {
       Object.defineProperty(document.documentElement, "clientWidth", { value: 1024, configurable: true });
-      Object.defineProperty(document.documentElement, "scrollHeight", { value: 3000, configurable: true });
-      const { unmount } = renderOverlay();
-      expect(store.setPageSize).toHaveBeenLastCalledWith({ width: 1024, height: 3000 });
+      const { viewport, unmount } = renderOverlay();
+
+      let heightDuringRead = "";
+      Object.defineProperty(document.documentElement, "scrollHeight", {
+        get: () => {
+          heightDuringRead = viewport()?.style.height ?? "";
+          return 1800;
+        },
+        configurable: true
+      });
 
       Object.defineProperty(document.documentElement, "clientWidth", { value: 1440, configurable: true });
       window.dispatchEvent(new Event("resize"));
-      expect(store.setPageSize).toHaveBeenLastCalledWith({ width: 1440, height: 3000 });
+      expect(heightDuringRead).toBe("0px");
+      expect(viewport()?.style.height).toBe("3000px");
+      expect(store.setPageSize).toHaveBeenLastCalledWith({ width: 1440, height: 1800 });
 
       unmount();
       vi.mocked(store.setPageSize).mockClear();

@@ -43,8 +43,12 @@ describe("database", () => {
 
   describe("grids", () => {
     it("adds, lists (oldest first), gets and deletes grids", async () => {
+      // Two adds within the same millisecond would tie on createdAt and list in random id order
+      let clock = 1000;
+      const now = vi.spyOn(Date, "now").mockImplementation(() => (clock += 1000));
       const a = await database.addGrid(gridInput({ columns: 2 }));
       const b = await database.addGrid(gridInput({ columns: 3 }));
+      now.mockRestore();
 
       expect((await database.getAllGrids()).map((g) => g.id)).toEqual([a, b]);
       expect(await database.getGrid(b)).toMatchObject({ id: b, columns: 3 });
@@ -58,7 +62,7 @@ describe("database", () => {
   });
 
   describe("mockups", () => {
-    it("stores images as Blobs and lists metadata newest first", async () => {
+    it("returns images as Blobs and lists metadata newest first", async () => {
       const [first, second] = await database.addMockups([mockupInput("a.png"), mockupInput("b.png")]);
 
       const mockups = await database.getAllMockups();
@@ -71,6 +75,37 @@ describe("database", () => {
       const image = await database.getMockupImage(first);
       expect(image).toBeInstanceOf(Blob);
       expect(await image!.text()).toBe("a.png");
+    });
+
+    it("stores bytes rather than Blobs, which Safari private windows reject", async () => {
+      const [id] = await database.addMockups(mockupInput("a.png"));
+
+      const raw = await openDB(DB_NAME);
+      const image = await raw.get("mockup_blobs", id);
+      const record = await raw.get("mockups", id);
+      raw.close();
+
+      expect(image).not.toBeInstanceOf(Blob);
+      expect(image).toEqual({ bytes: expect.any(ArrayBuffer), type: "image/png" });
+      expect(record.thumbnail).toEqual({ bytes: expect.any(ArrayBuffer), type: "image/png" });
+    });
+
+    it("still reads Blobs written by unreleased version 3 builds", async () => {
+      await database.getAllMockups(); // creates the version 3 database
+      const raw = await openDB(DB_NAME);
+      await raw.put("mockups", {
+        id: "m1",
+        filename: "a.png",
+        mimeType: "image/png",
+        createdAt: 1,
+        thumbnail: new Blob(["thumb"], { type: "image/png" })
+      });
+      await raw.put("mockup_blobs", new Blob(["original"], { type: "image/png" }), "m1");
+      raw.close();
+
+      const [mockup] = await database.getAllMockups();
+      expect(await mockup.thumbnail.text()).toBe("thumb");
+      expect(await (await database.getMockupImage("m1"))!.text()).toBe("original");
     });
 
     it("deletes a mockup together with its image", async () => {
@@ -125,6 +160,50 @@ describe("database", () => {
       open.mockRestore();
     });
 
+    const openOldTab = () =>
+      // Version 2.0 tabs keep their connection open when another tab needs to upgrade
+      openDB(DB_NAME, 2, {
+        upgrade(db) {
+          db.createObjectStore("mockups", { keyPath: "id" });
+          db.createObjectStore("mockup_blobs");
+          db.createObjectStore("grids", { keyPath: "id" });
+          db.createObjectStore("settings");
+        }
+      });
+    const blockedCause = async (call: Promise<unknown>) => ((await call.catch((error: Error) => error)) as Error).cause;
+
+    it("reports an older tab that blocks the upgrade, fails fast meanwhile, and recovers once it closes", async () => {
+      const { DatabaseBlockedError } = await import("~/utils/errors");
+      const oldTab = await openOldTab();
+
+      expect(await blockedCause(database.getAllGrids())).toBeInstanceOf(DatabaseBlockedError);
+      // Later calls don't queue up behind the blocked upgrade
+      expect(await blockedCause(database.getSettings("dock"))).toBeInstanceOf(DatabaseBlockedError);
+
+      oldTab.close();
+      // No reload needed: the upgrade completes and its connection is used from then on
+      await vi.waitFor(async () => expect(await database.getAllGrids()).toEqual([]));
+    });
+
+    it("reports an open stuck behind another tab's pending upgrade", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const { DatabaseBlockedError } = await import("~/utils/errors");
+        const oldTab = await openOldTab();
+        // A second tab of this version asks to upgrade first and gets blocked; ours queues behind it
+        const otherTab = openDB(DB_NAME, 3, { blocked: () => {} });
+
+        const call = database.getAllGrids().catch((error: Error) => error);
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(((await call) as Error).cause).toBeInstanceOf(DatabaseBlockedError);
+
+        oldTab.close();
+        (await otherTab).close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("steps aside when another tab upgrades the database, then reconnects", async () => {
       await database.addGrid(gridInput());
 
@@ -135,7 +214,7 @@ describe("database", () => {
   });
 
   describe("migration from version 2", () => {
-    it("converts stored ArrayBuffers to Blobs and keeps everything else", async () => {
+    it("keeps stored images readable as Blobs and keeps everything else", async () => {
       const v2 = await openDB(DB_NAME, 2, {
         upgrade(db) {
           db.createObjectStore("mockups", { keyPath: "id" });

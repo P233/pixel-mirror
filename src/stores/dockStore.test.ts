@@ -15,13 +15,6 @@ vi.mock("./database", () => ({
   saveSettings: vi.fn().mockResolvedValue(undefined)
 }));
 
-// Mock keyboardStore
-vi.mock("./keyboardStore.svelte", () => ({
-  keyboardStore: {
-    resetModifierStates: vi.fn()
-  }
-}));
-
 // Mock toastStore
 vi.mock("./toastStore.svelte", () => ({
   toastStore: {
@@ -35,7 +28,6 @@ describe("dockStore", () => {
   let dockStore: typeof import("./dockStore.svelte").dockStore;
   let getSettings: ReturnType<typeof vi.fn>;
   let saveSettings: ReturnType<typeof vi.fn>;
-  let keyboardStore: { resetModifierStates: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     vi.resetModules();
@@ -43,16 +35,13 @@ describe("dockStore", () => {
 
     // Get fresh mocks
     const dbModule = await import("./database");
-    const kbModule = await import("./keyboardStore.svelte");
 
     getSettings = dbModule.getSettings as ReturnType<typeof vi.fn>;
     saveSettings = dbModule.saveSettings as ReturnType<typeof vi.fn>;
-    keyboardStore = kbModule.keyboardStore as unknown as { resetModifierStates: ReturnType<typeof vi.fn> };
 
     // Reset mocks
     getSettings.mockReset().mockResolvedValue({});
     saveSettings.mockReset().mockResolvedValue(undefined);
-    keyboardStore.resetModifierStates.mockReset();
 
     // Import fresh store
     const module = await import("./dockStore.svelte");
@@ -73,8 +62,6 @@ describe("dockStore", () => {
       expect(dockStore.mode).toBe("toolbar");
       expect(dockStore.position).toBe("bottom");
       expect(dockStore.theme).toBe("light");
-      expect(dockStore.managerVisible).toBe(false);
-      expect(dockStore.toolbarVisible).toBe(true);
     });
   });
 
@@ -121,22 +108,6 @@ describe("dockStore", () => {
 
         expect(dockStore.mode).toBe("toolbar");
       });
-
-      it("hides manager and shows toolbar", () => {
-        dockStore.managerVisible = true;
-        dockStore.toolbarVisible = false;
-
-        dockStore.enterToolbar();
-
-        expect(dockStore.managerVisible).toBe(false);
-        expect(dockStore.toolbarVisible).toBe(true);
-      });
-
-      it("resets keyboard modifier states", () => {
-        dockStore.enterToolbar();
-
-        expect(keyboardStore.resetModifierStates).toHaveBeenCalled();
-      });
     });
 
     describe("enterMockups", () => {
@@ -144,22 +115,6 @@ describe("dockStore", () => {
         dockStore.enterMockups();
 
         expect(dockStore.mode).toBe("mockups");
-      });
-
-      it("hides toolbar and manager", () => {
-        dockStore.toolbarVisible = true;
-        dockStore.managerVisible = true;
-
-        dockStore.enterMockups();
-
-        expect(dockStore.toolbarVisible).toBe(false);
-        expect(dockStore.managerVisible).toBe(false);
-      });
-
-      it("resets keyboard modifier states", () => {
-        dockStore.enterMockups();
-
-        expect(keyboardStore.resetModifierStates).toHaveBeenCalled();
       });
 
       it("reports isManagerMode as true", () => {
@@ -174,22 +129,6 @@ describe("dockStore", () => {
         dockStore.enterGrids();
 
         expect(dockStore.mode).toBe("grids");
-      });
-
-      it("hides toolbar and manager", () => {
-        dockStore.toolbarVisible = true;
-        dockStore.managerVisible = true;
-
-        dockStore.enterGrids();
-
-        expect(dockStore.toolbarVisible).toBe(false);
-        expect(dockStore.managerVisible).toBe(false);
-      });
-
-      it("resets keyboard modifier states", () => {
-        dockStore.enterGrids();
-
-        expect(keyboardStore.resetModifierStates).toHaveBeenCalled();
       });
 
       it("reports isManagerMode as true", () => {
@@ -219,7 +158,7 @@ describe("dockStore", () => {
 
       const module = await import("./dockStore.svelte");
       const store = module.dockStore;
-      // afterEach flushes this instance\'s pending saves
+      // afterEach flushes this instance's pending saves
       flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
       await store.init();
 
@@ -257,7 +196,7 @@ describe("dockStore", () => {
 
       const module = await import("./dockStore.svelte");
       const store = module.dockStore;
-      // afterEach flushes this instance\'s pending saves
+      // afterEach flushes this instance's pending saves
       flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
       await store.init();
 
@@ -274,27 +213,47 @@ describe("dockStore", () => {
       await flushSettings();
       expect(saveSettings).toHaveBeenLastCalledWith("dock", expect.objectContaining({ theme: "dark" }));
     });
-  });
 
-  describe("size getter", () => {
-    beforeEach(async () => {
-      await dockStore.init();
-    });
+    it("follows system prefers-color-scheme dynamically and still allows manual toggle", async () => {
+      let changeListener: ((e: MediaQueryListEvent) => void) | undefined;
+      const originalMatchMedia = window.matchMedia;
+      window.matchMedia = vi.fn().mockImplementation(() => ({
+        matches: true,
+        addEventListener: (_type: string, cb: (e: MediaQueryListEvent) => void) => {
+          changeListener = cb;
+        },
+        removeEventListener: vi.fn()
+      }));
 
-    it("returns toolbar size for toolbar mode", () => {
-      expect(dockStore.size).toEqual({ width: 380, height: 44 });
-    });
+      try {
+        getSettings.mockResolvedValue({});
+        vi.resetModules();
+        const module = await import("./dockStore.svelte");
+        const store = module.dockStore;
+        flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
+        await store.init();
 
-    it("returns mockups size for mockups mode", () => {
-      dockStore.enterMockups();
+        // Starts with OS dark theme
+        expect(store.theme).toBe("dark");
 
-      expect(dockStore.size).toEqual({ width: 820, height: 480 });
-    });
+        // User manually overrides to light
+        store.toggleTheme();
+        expect(store.theme).toBe("light");
 
-    it("returns grids size for grids mode", () => {
-      dockStore.enterGrids();
+        // OS switches to dark -> follows OS
+        changeListener?.({ matches: true } as MediaQueryListEvent);
+        expect(store.theme).toBe("dark");
 
-      expect(dockStore.size).toEqual({ width: 640, height: 580 });
+        // OS switches to light -> follows OS
+        changeListener?.({ matches: false } as MediaQueryListEvent);
+        expect(store.theme).toBe("light");
+
+        // User can still manually toggle
+        store.toggleTheme();
+        expect(store.theme).toBe("dark");
+      } finally {
+        window.matchMedia = originalMatchMedia;
+      }
     });
   });
 
@@ -315,24 +274,6 @@ describe("dockStore", () => {
     it("is true for grids mode", () => {
       dockStore.enterGrids();
       expect(dockStore.isManagerMode).toBe(true);
-    });
-  });
-
-  describe("visibility setters", () => {
-    it("allows setting managerVisible", () => {
-      dockStore.managerVisible = true;
-      expect(dockStore.managerVisible).toBe(true);
-
-      dockStore.managerVisible = false;
-      expect(dockStore.managerVisible).toBe(false);
-    });
-
-    it("allows setting toolbarVisible", () => {
-      dockStore.toolbarVisible = false;
-      expect(dockStore.toolbarVisible).toBe(false);
-
-      dockStore.toolbarVisible = true;
-      expect(dockStore.toolbarVisible).toBe(true);
     });
   });
 });

@@ -8,6 +8,7 @@ import {
   freePlacement,
   IDLE,
   isAligned,
+  moveAlongAxes,
   placementFromSettings,
   type Interaction,
   type OverlayMode
@@ -71,10 +72,21 @@ describe("placement", () => {
     expect(alignmentX(placement)).toBeNull();
   });
 
+  it("frees only the axes a move goes along", () => {
+    const centeredTop = placementFromSettings("center", "top", { x: 0, y: 0 });
+
+    expect(moveAlongAxes(centeredTop, { x: 240, y: 0 }, { x: 240, y: 30 })).toEqual({
+      x: { align: "center" },
+      y: { offset: 30 }
+    });
+    expect(moveAlongAxes(centeredTop, { x: 240, y: 0 }, { x: 250, y: 30 })).toEqual(freePlacement({ x: 250, y: 30 }));
+    expect(moveAlongAxes(centeredTop, { x: 240, y: 0 }, { x: 240, y: 0 })).toEqual(centeredTop);
+  });
+
   it.each([
     [placementFromSettings("center", "top", { x: 0, y: 0 }), "top·center"],
-    [placementFromSettings(null, "bottom", { x: 0, y: 0 }), "bottom"],
-    [placementFromSettings("right", null, { x: 0, y: 0 }), "right"],
+    [placementFromSettings(null, "bottom", { x: 0, y: 0 }), "x:12, bottom"],
+    [placementFromSettings("right", null, { x: 0, y: 0 }), "right, y:-4"],
     [freePlacement({ x: 0, y: 0 }), "x:12, y:-4"]
   ])("describes %o as %s", (placement, expected) => {
     expect(describePlacement(placement, { x: 12.4, y: -3.6 })).toBe(expected);

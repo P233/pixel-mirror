@@ -47,6 +47,7 @@ import {
   freePlacement,
   IDLE,
   isAligned as getIsAligned,
+  moveAlongAxes,
   placementFromSettings,
   type Interaction,
   type OverlayMode,
@@ -86,7 +87,7 @@ const OVERLAY_SETTINGS_SCHEMA: SettingsSchema<MockupOverlaySettings> = {
   position: (value) => isFiniteNumber((value as Position)?.x) && isFiniteNumber((value as Position)?.y),
   alignmentX: (value) => value === null || value === "left" || value === "center" || value === "right",
   alignmentY: (value) => value === null || value === "top" || value === "bottom",
-  scale: (value) => (SCALE_OPTIONS as readonly unknown[]).includes(value)
+  scale: (value) => SCALE_OPTIONS.includes(value as (typeof SCALE_OPTIONS)[number])
 };
 
 function createMockupOverlayStore() {
@@ -202,15 +203,6 @@ function createMockupOverlayStore() {
     setPlacement(freePlacement(newPosition));
   }
 
-  function setAlignmentAxes(x: MockupAlignmentX | undefined, y: MockupAlignmentY | undefined) {
-    // An axis that loses its alignment stays where it currently is
-    const current = placedPosition;
-    setPlacement({
-      x: x === undefined ? placement.x : x === null ? { offset: current.x } : { align: x },
-      y: y === undefined ? placement.y : y === null ? { offset: current.y } : { align: y }
-    });
-  }
-
   /** The transform currently on screen, as the starting point for a gesture */
   function currentView(): View {
     return { ...transform };
@@ -233,9 +225,11 @@ function createMockupOverlayStore() {
   function endDrag() {
     if (interaction.kind !== "dragging") return;
 
-    const finalPosition = interaction.current;
+    const { origin, current } = interaction;
     interaction = IDLE;
-    placeAt(finalPosition);
+    // Only the axes the drag moved along lose their alignment; a plain click (a mouse press starts
+    // a drag right away) keeps it entirely
+    if (current.x !== origin.x || current.y !== origin.y) setPlacement(moveAlongAxes(placement, origin, current));
   }
 
   /** Scale around the pinch center captured at the start of the pinch */
@@ -262,6 +256,9 @@ function createMockupOverlayStore() {
     },
     get mockupSize() {
       return mockupSize;
+    },
+    get pageSize() {
+      return pageSize;
     },
     get isHidden() {
       return isHidden;
@@ -298,9 +295,6 @@ function createMockupOverlayStore() {
     },
     get isSolidOrZoomed() {
       return mode === "solid" || mode === "zoomed";
-    },
-    get isVisibleOrLocked() {
-      return mode === "visible" || mode === "locked";
     },
     get effectiveOpacity() {
       return mode === "solid" || mode === "zoomed" ? 1 : opacity;
@@ -369,11 +363,11 @@ function createMockupOverlayStore() {
     // Opacity (in visible or locked mode)
     // ============================================
 
-    adjustOpacity: (direction: number) => {
+    /** One opacity step: 1 more opaque, -1 more transparent */
+    stepOpacity: (direction: 1 | -1) => {
       if (!can.adjustAppearance(mode)) return;
 
-      const delta = direction > 0 ? -OPACITY_STEP : OPACITY_STEP;
-      settings.update({ opacity: clamp(roundTo(opacity + delta, 2), OPACITY_MIN, OPACITY_MAX) });
+      settings.update({ opacity: clamp(roundTo(opacity + direction * OPACITY_STEP, 2), OPACITY_MIN, OPACITY_MAX) });
     },
 
     resetOpacity: () => {
@@ -383,7 +377,7 @@ function createMockupOverlayStore() {
     },
 
     /**
-     * Set opacity directly (for mobile slider)
+     * Set opacity directly (for slider)
      */
     setOpacity: (value: number) => {
       if (!can.adjustAppearance(mode)) return;
@@ -413,27 +407,10 @@ function createMockupOverlayStore() {
     // Alignment (only in visible mode)
     // ============================================
 
-    setAlignmentX: (value: MockupAlignmentX) => {
+    setAlignment: (y: NonNullable<MockupAlignmentY>, x: NonNullable<MockupAlignmentX>) => {
       if (!can.reposition(mode)) return;
 
-      setAlignmentAxes(value, undefined);
-    },
-
-    setAlignmentY: (value: MockupAlignmentY) => {
-      if (!can.reposition(mode)) return;
-
-      setAlignmentAxes(undefined, value);
-    },
-
-    setAlignment: (y: MockupAlignmentY, x: MockupAlignmentX) => {
-      if (!can.reposition(mode)) return;
-
-      setAlignmentAxes(x, y);
-    },
-
-    clearAlignment: () => {
-      if (!can.reposition(mode)) return;
-      placeAt(placedPosition);
+      setPlacement({ x: { align: x }, y: { align: y } });
     },
 
     // ============================================
@@ -443,7 +420,8 @@ function createMockupOverlayStore() {
     move: (dx: number, dy: number) => {
       if (!can.reposition(mode)) return;
 
-      placeAt({ x: placedPosition.x + dx, y: placedPosition.y + dy });
+      const to = { x: placedPosition.x + dx, y: placedPosition.y + dy };
+      setPlacement(moveAlongAxes(placement, placedPosition, to));
     },
 
     // ============================================
@@ -517,10 +495,11 @@ function createMockupOverlayStore() {
     exitSolidMode: exitInspection,
 
     /**
-     * Toggle solid mode on touch devices (double tap)
+     * Toggle solid mode on touch devices (double tap). Also leaves zoom, which a mouse or pen can
+     * enter on hybrid devices: the HUD has no exit button
      */
     toggleMobileSolidMode: () => {
-      if (mode === "solid") {
+      if (interaction.kind === "inspecting") {
         exitInspection();
       } else if (can.adjustAppearance(mode)) {
         enterInspection();

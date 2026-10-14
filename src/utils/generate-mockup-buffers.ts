@@ -8,7 +8,7 @@
  */
 
 import { MOCKUP_THUMBNAIL_SIZE } from "~/constants";
-import { FileError } from "./errors";
+import { ValidationError } from "./errors";
 import { validateFiles } from "./validation";
 
 async function processFile(file: File): Promise<MockupInput> {
@@ -18,10 +18,10 @@ async function processFile(file: File): Promise<MockupInput> {
       const objectUrl = URL.createObjectURL(file);
 
       img.onload = () => {
-        // Create square crop from center
+        // Create square crop from top-center so tall page headers remain recognizable
         const size = Math.min(img.width, img.height);
         const sx = (img.width - size) / 2;
-        const sy = (img.height - size) / 2;
+        const sy = 0;
 
         const canvas = document.createElement("canvas");
         canvas.width = MOCKUP_THUMBNAIL_SIZE;
@@ -30,7 +30,7 @@ async function processFile(file: File): Promise<MockupInput> {
         const ctx = canvas.getContext("2d");
         if (!ctx) {
           URL.revokeObjectURL(objectUrl);
-          reject(new FileError("Failed to get canvas context"));
+          reject(new ValidationError("Failed to get canvas context"));
           return;
         }
 
@@ -42,7 +42,7 @@ async function processFile(file: File): Promise<MockupInput> {
             if (blob) {
               resolve({ thumbnail: blob, width: img.naturalWidth, height: img.naturalHeight });
             } else {
-              reject(new FileError("Failed to create thumbnail"));
+              reject(new ValidationError("Failed to create thumbnail"));
             }
           },
           file.type,
@@ -52,7 +52,7 @@ async function processFile(file: File): Promise<MockupInput> {
 
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
-        reject(new FileError(`Failed to load image: ${file.name}`));
+        reject(new ValidationError(`Failed to load image: ${file.name}`));
       };
 
       img.src = objectUrl;
@@ -60,7 +60,6 @@ async function processFile(file: File): Promise<MockupInput> {
   );
 
   return {
-    // The File is stored as is: it already is a Blob, so nothing is copied
     image: file,
     thumbnail,
     filename: file.name,
@@ -73,7 +72,7 @@ async function processFile(file: File): Promise<MockupInput> {
 
 export interface GenerateMockupBuffersResult {
   data: MockupInput[];
-  errors: FileError[];
+  errors: ValidationError[];
 }
 
 /**
@@ -94,7 +93,7 @@ export async function generateMockupBuffers(files: File[]): Promise<GenerateMock
   const results = await Promise.allSettled(validFiles.map(processFile));
 
   const data: MockupInput[] = [];
-  const processingErrors: FileError[] = [...errors];
+  const processingErrors: ValidationError[] = [...errors];
 
   results.forEach((result, index) => {
     if (result.status === "fulfilled") {
@@ -102,9 +101,9 @@ export async function generateMockupBuffers(files: File[]): Promise<GenerateMock
     } else {
       const file = validFiles[index];
       const error =
-        result.reason instanceof FileError
+        result.reason instanceof ValidationError
           ? result.reason
-          : new FileError(`Failed to process ${file.name}`, String(result.reason));
+          : new ValidationError(`Failed to process ${file.name}`, String(result.reason));
       processingErrors.push(error);
     }
   });

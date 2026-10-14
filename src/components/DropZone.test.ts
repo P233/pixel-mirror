@@ -3,11 +3,8 @@
  */
 
 import { cleanup, render } from "@testing-library/svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import DropZone from "./DropZone.svelte";
-
-// Mock SVG icon
-vi.mock("~/assets/image-upload-stroke-rounded.svg?component", () => ({ default: () => null }));
 
 describe("DropZone component", () => {
   afterEach(() => {

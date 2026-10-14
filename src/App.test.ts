@@ -156,6 +156,26 @@ describe("drag-and-drop upload", () => {
     expect(mockupManagerStore.uploadAndActivate).not.toHaveBeenCalled();
   });
 
+  it("leaves file drags over a host file input to the input", async () => {
+    const { container } = await renderApp();
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    document.body.appendChild(fileInput);
+    const dragOver = dragEvent("dragover", ["Files"]);
+    const drop = dragEvent("drop", ["Files"], [imageFile()]);
+
+    fileInput.dispatchEvent(dragEvent("dragenter", ["Files"]));
+    fileInput.dispatchEvent(dragOver);
+    await tick();
+    expect(container.querySelector(".drop-zone")).toBeNull();
+    fileInput.dispatchEvent(drop);
+
+    expect(dragOver.defaultPrevented).toBe(false);
+    expect(drop.defaultPrevented).toBe(false);
+    expect(mockupManagerStore.uploadAndActivate).not.toHaveBeenCalled();
+    fileInput.remove();
+  });
+
   it("ignores file drops the host page already handled", async () => {
     await renderApp();
     const hostUploader = document.createElement("div");
