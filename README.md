@@ -19,40 +19,47 @@ The mockup overlay has 5 modes:
 | Mode         | Description                                                                   |
 | ------------ | ----------------------------------------------------------------------------- |
 | **Visible**  | Default. Drag, adjust opacity/scale/alignment.                                |
-| **Locked**   | Position frozen, no interaction except unlock.                                |
+| **Locked**   | Position frozen; clicks, hovers and scrolling pass through to the page.       |
 | **Dragging** | Active during drag, returns to visible on release.                            |
 | **Solid**    | 100% opacity for pixel comparison. Desktop: hold `Space`; Mobile: double-tap. |
-| **Zoomed**   | 2x zoom with mouse pan (desktop only). Click in solid mode to enter.          |
+| **Zoomed**   | 2x zoom with mouse pan. Click in solid mode to enter, click again to leave.   |
 
 ## Usage
 
 ### Desktop
 
-| Action                          | Shortcut                                |
-| ------------------------------- | --------------------------------------- |
-| Show / Hide mockup              | Toolbar button                          |
-| Lock / Unlock position          | `Escape` or toolbar button              |
-| Adjust opacity                  | `Ctrl + Scroll` (click button to reset) |
-| Drag mockup                     | Mouse drag on overlay                   |
-| Nudge mockup (1px)              | Arrow keys                              |
-| Nudge mockup (10px)             | `Shift` + Arrow keys                    |
-| Enter solid mode (100% opacity) | Hold `Space`                            |
-| Zoom (2x) in solid mode         | Click                                   |
-| Pan in zoomed mode              | Move mouse                              |
-| Cycle scale (1x / 0.5x)         | Toolbar button                          |
+| Action                          | Shortcut                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| Add mockups                     | Drop images on the page, or Mockup Studio                                |
+| Show / Hide mockup              | Toolbar button                                                           |
+| Lock / Unlock position          | `Escape` or toolbar button                                               |
+| Snap to an edge or center       | Hover the alignment button; click it for top center                      |
+| Adjust opacity                  | Hover the opacity button, or `Ctrl + Scroll` (click the button to reset) |
+| Drag mockup                     | Mouse drag on overlay                                                    |
+| Nudge mockup (1px)              | Arrow keys                                                               |
+| Nudge mockup (10px)             | `Shift` + Arrow keys                                                     |
+| Enter solid mode (100% opacity) | Hold `Space`                                                             |
+| Zoom (2x) in solid mode         | Click                                                                    |
+| Pan in zoomed mode              | Move mouse                                                               |
+| Cycle scale (1x / 0.5x)         | Toolbar button                                                           |
+| Grid color opacity              | Scroll over the color field in Grid Studio                               |
+
+Moving the mockup only releases the alignment of the axis you move it along: center it horizontally, then nudge it down with the arrow keys to check a section further down the page.
 
 ### Mobile / Touch
 
-| Action                   | Gesture                            |
-| ------------------------ | ---------------------------------- |
-| Show / Hide mockup       | Toolbar button                     |
-| Lock / Unlock position   | Toolbar button                     |
-| Adjust opacity           | Horizontal slide on opacity button |
-| Drag mockup              | Touch drag on overlay              |
-| Toggle solid mode        | Double-tap anywhere                |
-| Pinch zoom in solid mode | Two-finger pinch (0.25x–4x)        |
-| Pan in solid mode        | Single finger drag                 |
-| Cycle scale (1x / 0.5x)  | Toolbar button                     |
+| Action                    | Gesture                                            |
+| ------------------------- | -------------------------------------------------- |
+| Add mockups               | Mockup Studio                                      |
+| Show / Hide mockup        | Toolbar button                                     |
+| Lock / Unlock position    | Toolbar button                                     |
+| Snap to an edge or center | Tap the alignment button; tap again for top center |
+| Adjust opacity            | Horizontal slide on opacity button                 |
+| Drag mockup               | Touch drag on overlay                              |
+| Toggle solid mode         | Double-tap anywhere                                |
+| Pinch zoom in solid mode  | Two-finger pinch (0.25x–4x)                        |
+| Pan in solid mode         | Single finger drag                                 |
+| Cycle scale (1x / 0.5x)   | Toolbar button                                     |
 
 ## Installation
 
@@ -121,4 +128,4 @@ If your page enforces [Trusted Types](https://developer.mozilla.org/docs/Web/API
 
 ## Credits
 
-Icons by https://hugeicons.com
+Icons from [Lucide](https://lucide.dev) (ISC License); see [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
