@@ -55,6 +55,12 @@ export function validateCSSLength(value: string, fieldName: string): ValidationR
   return ok(trimmed);
 }
 
+export function validateSpacingGridHeight(value: string): ValidationResult<string> {
+  const validation = validateCSSLength(value, "Spacing grid height");
+  if (!validation.success) return validation;
+  return /(?:px|rem)$/.test(validation.data) ? validation : fail("Spacing grid height must use px or rem");
+}
+
 /**
  * Validate a CSS color value. Uses the browser's own parser when available,
  * so every valid CSS color (named, hsl, oklch, ...) is accepted.

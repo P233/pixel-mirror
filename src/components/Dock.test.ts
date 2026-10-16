@@ -6,7 +6,7 @@ import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Dock from "./Dock.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
-import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
+import { overlayController } from "~/features/overlay/controller.svelte";
 
 // Mock sub-components
 vi.mock("./GridManager.svelte", () => ({ default: () => null }));
@@ -35,8 +35,8 @@ vi.mock("~/stores/dockStore.svelte", () => ({
   }
 }));
 
-vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
-  mockupOverlayStore: {
+vi.mock("~/features/overlay/controller.svelte", () => ({
+  overlayController: {
     activeMockupId: "test-id",
     mode: "visible" as "visible" | "locked" | "dragging" | "solid" | "zoomed",
     isHidden: false,
@@ -75,7 +75,7 @@ const mockDockStore = dockStore as unknown as {
   toggleTheme: ReturnType<typeof vi.fn>;
 };
 
-const mockMockupStore = mockupOverlayStore as unknown as {
+const mockMockupStore = overlayController as unknown as {
   activeMockupId: string | null;
   mode: "visible" | "locked" | "dragging" | "solid" | "zoomed";
   isHidden: boolean;
@@ -310,7 +310,7 @@ describe("Dock component", () => {
       const { container } = render(Dock);
 
       const opacityBtn = container.querySelector("[data-testid='btn-opacity']") as HTMLButtonElement;
-      opacityBtn.click();
+      opacityBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 
       expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
       expect((container.querySelector("[data-testid='btn-alignment']") as HTMLButtonElement).disabled).toBe(false);
@@ -394,6 +394,72 @@ describe("Dock component", () => {
   });
 
   describe("opacity popover", () => {
+    it.each(["opacity", "alignment"])("keeps the focused %s popover open when the pointer leaves", async (kind) => {
+      const { container } = render(Dock);
+      const trigger = container.querySelector<HTMLButtonElement>(`[data-testid='btn-${kind}']`)!;
+      trigger.click();
+      await import("svelte").then(({ tick }) => tick());
+      const focused = document.activeElement;
+      expect(focused?.closest(".dock__popover")).not.toBeNull();
+
+      trigger.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: document.body }));
+      await import("svelte").then(({ tick }) => tick());
+
+      expect(focused).toHaveFocus();
+      expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+      const otherKind = kind === "opacity" ? "alignment" : "opacity";
+      container.querySelector(`[data-testid='btn-${otherKind}']`)!.dispatchEvent(new MouseEvent("mouseenter"));
+      await import("svelte").then(({ tick }) => tick());
+
+      expect(focused).toHaveFocus();
+      expect(trigger).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it.each(["opacity", "alignment"])(
+      "keeps the %s popover open if it gains focus during hover dismissal",
+      async (kind) => {
+        const { container } = render(Dock);
+        const trigger = container.querySelector<HTMLButtonElement>(`[data-testid='btn-${kind}']`)!;
+        trigger.dispatchEvent(new MouseEvent("mouseenter"));
+        await import("svelte").then(({ tick }) => tick());
+        trigger.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: container.querySelector(".toolbar") }));
+
+        container.querySelector<HTMLElement>(".dock__popover input, .dock__popover button")!.focus();
+        const focused = document.activeElement;
+        await new Promise((resolve) => setTimeout(resolve, 160));
+
+        expect(focused).toHaveFocus();
+        expect(trigger).toHaveAttribute("aria-expanded", "true");
+      }
+    );
+
+    it("opens and focuses the opacity slider on keyboard activation, then restores focus on Escape", async () => {
+      const { container } = render(Dock);
+      const trigger = container.querySelector<HTMLButtonElement>("[data-testid='btn-opacity']")!;
+      trigger.focus();
+
+      trigger.click();
+      await import("svelte").then(({ tick }) => tick());
+
+      const slider = container.querySelector<HTMLInputElement>("[data-testid='slider-opacity']")!;
+      expect(slider).toHaveFocus();
+      expect(slider).toHaveAccessibleName("Mockup opacity");
+      expect(slider).toHaveAttribute("min", "10");
+      expect(slider).toHaveAttribute("max", "90");
+      expect(trigger).toHaveAttribute("aria-expanded", "true");
+      expect(mockMockupStore.resetOpacity).not.toHaveBeenCalled();
+
+      slider.value = "75";
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(mockMockupStore.setOpacity).toHaveBeenCalledWith(0.75);
+
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await import("svelte").then(({ tick }) => tick());
+      expect(trigger).toHaveFocus();
+      expect(container.querySelector("[data-testid='popover-opacity']")).toBeNull();
+    });
+
     it("opens opacity popover on mouseenter, keeps it open while moving across toolbar to popover, and updates opacity", async () => {
       const { container } = render(Dock);
 
@@ -664,7 +730,7 @@ describe("Dock component", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       const opacityPopover = container.querySelector("[data-testid='popover-opacity']") as HTMLElement;
-      expect(opacityPopover.style.left).toBe("108px");
+      expect(opacityPopover.style.getPropertyValue("--popover-anchor")).toBe("108px");
 
       opacityBtn.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, relatedTarget: document.body }));
       alignBtn.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));

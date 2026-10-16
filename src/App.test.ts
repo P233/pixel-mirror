@@ -16,16 +16,16 @@ vi.mock("~/stores/dockStore.svelte", () => ({
   dockStore: { theme: "light" as Theme, isManagerMode: false }
 }));
 
-vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
-  mockupOverlayStore: {
+vi.mock("~/features/overlay/controller.svelte", () => ({
+  overlayController: {
     isHidden: false,
     activeMockupUrl: "blob:mockup" as string | null,
     toggleMobileSolidMode: vi.fn()
   }
 }));
 
-vi.mock("~/stores/mockupManagerStore.svelte", () => ({
-  mockupManagerStore: { uploadAndActivate: vi.fn() }
+vi.mock("~/stores/mockupStore.svelte", () => ({
+  mockupStore: { uploadAndActivate: vi.fn() }
 }));
 
 vi.mock("~/utils/device", () => ({ isTouchDevice: vi.fn(() => false) }));
@@ -35,13 +35,13 @@ vi.mock("~/bootstrap", () => ({ startApp: vi.fn(() => stopApp) }));
 
 import App from "./App.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
-import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
-import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
+import { mockupStore } from "~/stores/mockupStore.svelte";
+import { overlayController } from "~/features/overlay/controller.svelte";
 import { isTouchDevice } from "~/utils/device";
 import { startApp } from "~/bootstrap";
 
 const dock = dockStore as { theme: Theme; isManagerMode: boolean };
-const overlay = mockupOverlayStore as {
+const overlay = overlayController as {
   isHidden: boolean;
   activeMockupUrl: string | null;
   toggleMobileSolidMode: () => void;
@@ -133,7 +133,7 @@ describe("drag-and-drop upload", () => {
     document.body.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
-    expect(mockupManagerStore.uploadAndActivate).toHaveBeenCalledWith([file]);
+    expect(mockupStore.uploadAndActivate).toHaveBeenCalledWith([file]);
   });
 
   it("filters out non-image files", async () => {
@@ -141,7 +141,7 @@ describe("drag-and-drop upload", () => {
 
     document.body.dispatchEvent(dragEvent("drop", ["Files"], [new File(["x"], "notes.txt", { type: "text/plain" })]));
 
-    expect(mockupManagerStore.uploadAndActivate).not.toHaveBeenCalled();
+    expect(mockupStore.uploadAndActivate).not.toHaveBeenCalled();
   });
 
   it("does not cancel text drops onto host inputs", async () => {
@@ -153,7 +153,7 @@ describe("drag-and-drop upload", () => {
     input.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(false);
-    expect(mockupManagerStore.uploadAndActivate).not.toHaveBeenCalled();
+    expect(mockupStore.uploadAndActivate).not.toHaveBeenCalled();
   });
 
   it("leaves file drags over a host file input to the input", async () => {
@@ -172,7 +172,7 @@ describe("drag-and-drop upload", () => {
 
     expect(dragOver.defaultPrevented).toBe(false);
     expect(drop.defaultPrevented).toBe(false);
-    expect(mockupManagerStore.uploadAndActivate).not.toHaveBeenCalled();
+    expect(mockupStore.uploadAndActivate).not.toHaveBeenCalled();
     fileInput.remove();
   });
 
@@ -184,20 +184,27 @@ describe("drag-and-drop upload", () => {
 
     hostUploader.dispatchEvent(dragEvent("drop", ["Files"], [imageFile()]));
 
-    expect(mockupManagerStore.uploadAndActivate).not.toHaveBeenCalled();
+    expect(mockupStore.uploadAndActivate).not.toHaveBeenCalled();
   });
 });
 
 describe("double tap on touch devices", () => {
-  const touchEnd = (x = 100, y = 100) => {
-    const event = new TouchEvent("touchend", {
+  const touchEvent = (type: string, points: Position[], changed: Position[] = points) => {
+    const touches = (values: Position[]) =>
+      values.map(({ x, y }, identifier) => ({ identifier, clientX: x, clientY: y }) as Touch);
+    const event = new TouchEvent(type, {
       bubbles: true,
       cancelable: true,
-      touches: [],
-      changedTouches: [{ identifier: 0, clientX: x, clientY: y } as Touch]
+      touches: touches(points),
+      changedTouches: touches(changed)
     });
     document.body.dispatchEvent(event);
     return event;
+  };
+
+  const tap = (x = 100, y = 100) => {
+    touchEvent("touchstart", [{ x, y }]);
+    return touchEvent("touchend", [], [{ x, y }]);
   };
 
   beforeEach(() => {
@@ -207,8 +214,8 @@ describe("double tap on touch devices", () => {
   it("toggles solid mode and swallows the second tap's click", async () => {
     await renderApp();
 
-    touchEnd();
-    const second = touchEnd();
+    tap();
+    const second = tap();
 
     expect(overlay.toggleMobileSolidMode).toHaveBeenCalledTimes(1);
     expect(second.defaultPrevented).toBe(true);
@@ -220,12 +227,70 @@ describe("double tap on touch devices", () => {
     expect(document.documentElement.style.touchAction).toBe("pan-x pan-y");
   });
 
+  it("restores the host's inline touch-action and its priority on unmount", async () => {
+    document.documentElement.style.setProperty("touch-action", "manipulation", "important");
+    const { unmount } = await renderApp();
+    expect(document.documentElement.style.touchAction).toBe("pan-x pan-y");
+
+    unmount();
+
+    expect(document.documentElement.style.touchAction).toBe("manipulation");
+    expect(document.documentElement.style.getPropertyPriority("touch-action")).toBe("important");
+  });
+
+  it("preserves a touch-action change made by the host while the tool is active", async () => {
+    const { unmount } = await renderApp();
+    document.documentElement.style.touchAction = "none";
+
+    unmount();
+
+    expect(document.documentElement.style.touchAction).toBe("none");
+  });
+
+  it("does not count a drag ending beside a tap as a double tap", async () => {
+    await renderApp();
+    tap();
+    touchEvent("touchstart", [{ x: 180, y: 180 }]);
+    touchEvent("touchmove", [{ x: 100, y: 100 }]);
+    touchEvent("touchend", [], [{ x: 100, y: 100 }]);
+
+    expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
+    tap();
+    expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
+    tap();
+    expect(overlay.toggleMobileSolidMode).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not count a multi-touch gesture as a tap", async () => {
+    await renderApp();
+    tap();
+    touchEvent("touchstart", [{ x: 100, y: 100 }]);
+    touchEvent("touchstart", [
+      { x: 100, y: 100 },
+      { x: 200, y: 200 }
+    ]);
+    touchEvent("touchend", [{ x: 100, y: 100 }], [{ x: 200, y: 200 }]);
+    touchEvent("touchend", [], [{ x: 100, y: 100 }]);
+
+    expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
+  });
+
+  it("cancels tap history when the browser cancels a touch", async () => {
+    await renderApp();
+    tap();
+    touchEvent("touchstart", [{ x: 100, y: 100 }]);
+    touchEvent("touchcancel", [], [{ x: 100, y: 100 }]);
+    tap();
+
+    expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
+  });
+
   it("does nothing while a manager panel is open", async () => {
     dock.isManagerMode = true;
     await renderApp();
 
-    touchEnd();
-    touchEnd();
+    tap();
+    tap();
 
     expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
   });
@@ -234,8 +299,8 @@ describe("double tap on touch devices", () => {
     overlay.activeMockupUrl = null;
     await renderApp();
 
-    touchEnd();
-    touchEnd();
+    tap();
+    tap();
 
     expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
     expect(document.documentElement.style.touchAction).toBe("");
@@ -244,9 +309,9 @@ describe("double tap on touch devices", () => {
   it("ignores a tap that comes right after scrolling", async () => {
     await renderApp();
 
-    touchEnd();
+    tap();
     window.dispatchEvent(new Event("scroll"));
-    touchEnd();
+    tap();
 
     expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
   });
@@ -255,9 +320,9 @@ describe("double tap on touch devices", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     await renderApp();
 
-    touchEnd();
+    tap();
     vi.setSystemTime(Date.now() + DOUBLE_TAP_DELAY + 1);
-    touchEnd();
+    tap();
 
     vi.useRealTimers();
     expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
@@ -267,8 +332,8 @@ describe("double tap on touch devices", () => {
     vi.mocked(isTouchDevice).mockReturnValue(false);
     await renderApp();
 
-    touchEnd();
-    touchEnd();
+    tap();
+    tap();
 
     expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
   });

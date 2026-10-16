@@ -15,7 +15,7 @@
 
 import { isTypingInField } from "~/platform/typing";
 import { dockStore } from "./dockStore.svelte";
-import { mockupOverlayStore } from "./mockupOverlayStore.svelte";
+import { overlayController } from "~/features/overlay/controller.svelte";
 
 // Arrow key deltas for movement
 const ARROW_KEY_DELTAS: Record<string, [number, number]> = {
@@ -43,7 +43,7 @@ function createKeyboardStore() {
    * - A mockup is loaded and not hidden
    */
   function shouldHandleMockupEvents(): boolean {
-    return dockStore.mode === "toolbar" && !mockupOverlayStore.isHidden && !!mockupOverlayStore.activeMockupUrl;
+    return dockStore.mode === "toolbar" && !overlayController.isHidden && !!overlayController.activeMockupUrl;
   }
 
   /**
@@ -59,13 +59,13 @@ function createKeyboardStore() {
    * Works in both visible and locked modes
    */
   function handleWheel(e: WheelEvent) {
-    if (!shouldHandleMockupEvents()) return;
-    const { mode } = mockupOverlayStore;
+    if (e.defaultPrevented || !shouldHandleMockupEvents()) return;
+    const { mode } = overlayController;
     if (mode !== "visible" && mode !== "locked") return;
 
     e.preventDefault();
     // Scrolling down makes the mockup more opaque
-    mockupOverlayStore.stepOpacity(e.deltaY > 0 ? 1 : -1);
+    overlayController.stepOpacity(e.deltaY > 0 ? 1 : -1);
   }
 
   /**
@@ -97,7 +97,7 @@ function createKeyboardStore() {
 
     if (isSpacePressed) {
       isSpacePressed = false;
-      mockupOverlayStore.exitSolidMode();
+      overlayController.exitSolidMode();
     }
   }
 
@@ -129,7 +129,7 @@ function createKeyboardStore() {
     // In manager mode, let buttons respond to space key normally
     if (!shouldHandleMockupEvents() || isReservedForHost(e)) return;
 
-    const { mode } = mockupOverlayStore;
+    const { mode } = overlayController;
 
     switch (e.key) {
       case " ":
@@ -140,14 +140,14 @@ function createKeyboardStore() {
         // Space: enter solid mode (only from visible or locked)
         if (!isSpacePressed && (mode === "visible" || mode === "locked")) {
           isSpacePressed = true;
-          mockupOverlayStore.enterSolidMode();
+          overlayController.enterSolidMode();
         }
         break;
 
       case "Escape":
         // Escape: toggle lock (only in visible/locked mode); holding the key must not flip it repeatedly
         if (!e.repeat && (mode === "visible" || mode === "locked")) {
-          mockupOverlayStore.toggleLock();
+          overlayController.toggleLock();
         }
         break;
 
@@ -160,7 +160,7 @@ function createKeyboardStore() {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const [dx, dy] = ARROW_KEY_DELTAS[e.key];
-        mockupOverlayStore.move(dx * step, dy * step);
+        overlayController.move(dx * step, dy * step);
         break;
       }
     }
@@ -174,7 +174,7 @@ function createKeyboardStore() {
       case " ":
         if (isSpacePressed) {
           isSpacePressed = false;
-          mockupOverlayStore.exitSolidMode();
+          overlayController.exitSolidMode();
         }
         break;
 

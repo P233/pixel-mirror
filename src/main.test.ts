@@ -71,11 +71,11 @@ describe("main.ts", () => {
     expect(document.querySelector("pixel-mirror")).toBeInTheDocument();
   });
 
-  it("sets html element position to relative", async () => {
-    expect(document.documentElement.style.position).toBe("");
+  it.each(["", "static", "absolute"])("preserves host html positioning %j", async (position) => {
+    document.documentElement.style.position = position;
 
     await import("./main");
 
-    expect(document.documentElement.style.position).toBe("relative");
+    expect(document.documentElement.style.position).toBe(position);
   });
 });

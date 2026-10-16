@@ -13,8 +13,8 @@
   import { ALLOWED_MIME_TYPES } from "~/constants";
   import { createDoubleTapDetector } from "~/features/overlay/doubleTap";
   import { dockStore } from "~/stores/dockStore.svelte";
-  import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
-  import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
+  import { mockupStore } from "~/stores/mockupStore.svelte";
+  import { overlayController } from "~/features/overlay/controller.svelte";
   import { isTouchDevice } from "~/utils/device";
 
   onMount(startApp);
@@ -22,15 +22,26 @@
   // Global double-tap: anywhere on the page (dock included) toggles solid mode
   const doubleTap = createDoubleTapDetector();
 
+  function handleGlobalTouchStart(e: TouchEvent) {
+    if (dockStore.isManagerMode || e.touches.length !== 1) return doubleTap.cancel();
+    const touch = e.touches[0];
+    doubleTap.start({ x: touch.clientX, y: touch.clientY }, Date.now());
+  }
+
+  function handleGlobalTouchMove(e: TouchEvent) {
+    if (e.touches.length !== 1) return doubleTap.cancel();
+    const touch = e.touches[0];
+    doubleTap.move({ x: touch.clientX, y: touch.clientY });
+  }
+
   function handleGlobalTouchEnd(e: TouchEvent) {
-    // Skip in manager mode (mockups/grids panels) and while other fingers are still down
-    if (dockStore.isManagerMode || e.touches.length !== 0) return;
+    if (dockStore.isManagerMode || e.touches.length !== 0) return doubleTap.cancel();
 
     const touch = e.changedTouches[0];
-    if (doubleTap.tap({ x: touch.clientX, y: touch.clientY }, Date.now())) {
+    if (doubleTap.end({ x: touch.clientX, y: touch.clientY }, Date.now())) {
       // Also stops the second tap from clicking whatever is under it
       e.preventDefault();
-      mockupOverlayStore.toggleMobileSolidMode();
+      overlayController.toggleMobileSolidMode();
     }
   }
 
@@ -83,7 +94,7 @@
     );
 
     if (files.length > 0) {
-      mockupManagerStore.uploadAndActivate(files);
+      mockupStore.uploadAndActivate(files);
     }
   }
 
@@ -106,16 +117,25 @@
     // Only set up touch handlers on devices that support touch
     // Keyboard shortcuts are handled separately and always work
     if (!isTouchDevice()) return;
-    if (mockupOverlayStore.isHidden || !mockupOverlayStore.activeMockupUrl) return;
+    if (overlayController.isHidden || !overlayController.activeMockupUrl) return;
 
-    document.documentElement.style.touchAction = "pan-x pan-y";
+    const style = document.documentElement.style;
+    const previousTouchAction = style.getPropertyValue("touch-action");
+    const previousPriority = style.getPropertyPriority("touch-action");
+    style.setProperty("touch-action", "pan-x pan-y");
     const stops = [
+      on(document, "touchstart", handleGlobalTouchStart, { passive: true }),
+      on(document, "touchmove", handleGlobalTouchMove, { passive: true }),
       on(document, "touchend", handleGlobalTouchEnd, { passive: false }),
+      on(document, "touchcancel", doubleTap.cancel, { passive: true }),
       on(window, "scroll", () => doubleTap.scrolled(Date.now()), { passive: true })
     ];
 
     return () => {
-      document.documentElement.style.touchAction = "";
+      if (style.getPropertyValue("touch-action") === "pan-x pan-y" && !style.getPropertyPriority("touch-action")) {
+        style.setProperty("touch-action", previousTouchAction, previousPriority);
+      }
+      doubleTap.cancel();
       stops.forEach((stop) => stop());
     };
   });

@@ -5,12 +5,12 @@
 import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MockupManager from "./MockupManager.svelte";
-import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
+import { mockupStore } from "~/stores/mockupStore.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
 
 // Mock stores
-vi.mock("~/stores/mockupManagerStore.svelte", () => ({
-  mockupManagerStore: {
+vi.mock("~/stores/mockupStore.svelte", () => ({
+  mockupStore: {
     initialized: true,
     mockups: [] as Array<{
       id: string;
@@ -37,7 +37,7 @@ vi.mock("~/stores/dockStore.svelte", () => ({
 }));
 
 // Get typed references to mocks
-const mockManagerStore = mockupManagerStore as unknown as {
+const mockManagerStore = mockupStore as unknown as {
   initialized: boolean;
   mockups: Array<{
     id: string;

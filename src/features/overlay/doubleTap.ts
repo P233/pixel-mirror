@@ -2,7 +2,7 @@
  * Double-tap recognition for touch screens (pure, no DOM)
  */
 
-import { DOUBLE_TAP_DELAY, DRAG_THRESHOLD_GLOBAL, SCROLL_COOLDOWN } from "~/constants";
+import { DOUBLE_TAP_DELAY, DRAG_THRESHOLD, DRAG_THRESHOLD_GLOBAL, SCROLL_COOLDOWN } from "~/constants";
 
 export interface DoubleTapOptions {
   /** Max time between the two taps (ms) */
@@ -21,10 +21,33 @@ export function createDoubleTapDetector({
   let lastTapTime = -Infinity;
   let lastTapPosition: Position = { x: 0, y: 0 };
   let lastScrollTime = -Infinity;
+  let touchStart: { position: Position; time: number } | null = null;
+
+  function cancel() {
+    touchStart = null;
+    lastTapTime = -Infinity;
+  }
+
+  const hasMoved = (from: Position, to: Position) =>
+    Math.abs(to.x - from.x) > DRAG_THRESHOLD || Math.abs(to.y - from.y) > DRAG_THRESHOLD;
 
   return {
-    /** Register a tap; returns true when it completes a double tap */
-    tap(position: Position, now: number): boolean {
+    start(position: Position, now: number) {
+      touchStart = { position, time: now };
+    },
+
+    move(position: Position) {
+      if (touchStart && hasMoved(touchStart.position, position)) cancel();
+    },
+
+    /** Only a short, stationary, uncancelled touch can complete a double tap */
+    end(position: Position, now: number): boolean {
+      const start = touchStart;
+      touchStart = null;
+      if (!start || now - start.time >= delay || hasMoved(start.position, position)) {
+        cancel();
+        return false;
+      }
       if (now - lastScrollTime < scrollCooldown) {
         lastTapTime = -Infinity;
         return false;
@@ -41,8 +64,11 @@ export function createDoubleTapDetector({
       return isDoubleTap;
     },
 
+    cancel,
+
     scrolled(now: number) {
       lastScrollTime = now;
+      cancel();
     }
   };
 }

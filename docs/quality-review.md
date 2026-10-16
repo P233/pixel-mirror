@@ -1,8 +1,10 @@
 # Pixel Mirror 质量评审记录
 
-> 最后更新：2026-10-14
+> 最后更新：2026-10-15
 > 评审基线：`72e0760`；依赖升级：`1b4c862`、`3a03936`
 > 本文档持续维护：问题修复后更新「状态」列，不删除条目。
+
+Current state ownership and rendering boundaries: [Architecture](architecture.md). Paths in the earlier review describe its original baseline.
 
 ## 目录
 
@@ -76,7 +78,7 @@
 | E1  | `App.test.ts` 的 28 个测试测的是复制到测试文件里的逻辑，`App.svelte` 覆盖率 0%                                                                                                                                                                                    | ✅ `fbb56b9`                                                                                                                                                                                 |
 | E2  | `src/stores/__mocks__/database.ts` 是死代码（所有 `vi.mock` 都传了工厂函数）                                                                                                                                                                                      | ✅ `12fcd37`                                                                                                                                                                                 |
 | E3  | CLAUDE.md（558 行）与代码脱节：`resetTouchState`、`addTouchListeners`、`removeTouchListeners`、`exitZoomedMode`、`setMode`、`handleMouseDown`、`hasActiveGrid` 在代码中不存在                                                                                     | ✅ 已重写精简                                                                                                                                                                                |
-| E4  | 没有 CI                                                                                                                                                                                                                                                           | ⬜                                                                                                                                                                                           |
+| E4  | 没有 CI                                                                                                                                                                                                                                                           | ✅ 已添加 `.github/workflows/ci.yml`（check、lint、build、test）；远端运行待推送后验证                                                                                                       |
 | E5  | `prettier --check .` 在 `tsconfig.json`、`pnpm-lock.yaml` 上不通过（缺少 `.prettierignore`）                                                                                                                                                                      | ✅ 已添加 `.prettierignore`；`pnpm lint` 现包含 `prettier --check`                                                                                                                           |
 | E6  | `svelte.config.js` 全局开启 `customElement: true`，每个组件都被包装成 custom element（同一组件产物 936 → 1242 字节）。Svelte 5.54 起可以按文件开启，方案见 6.4                                                                                                    | 🟨 保持 Shadow DOM 样式注入稳定                                                                                                                                                              |
 | E7  | 全局关闭 svgo 的 `cleanupIds`，只为了用 CSS 选中一个图标内部的 `#toggle-trigger`                                                                                                                                                                                  | ✅ 已移除 `#toggle-trigger` 并恢复 `cleanupIds`                                                                                                                                              |
@@ -216,7 +218,7 @@ src/
 │   ├── keyboard.ts          # 快捷键表加统一过滤
 │   ├── fileDrop.ts
 │   ├── db.ts                # openDB、版本迁移、blocking 处理、失败后允许重试
-│   └── settings.svelte.ts   # 持久化设置：防抖写入整组快照，读取时校验
+│   └── settings.svelte.ts   # 持久化设置：合并同一任务的字段补丁，事务内写入，读取时校验
 └── shared/                  # math.ts、errors.ts、icons.ts（语义化导出）、styles/
 ```
 
@@ -327,7 +329,7 @@ Touch Events、Safari Gesture Events、空的 `handlePointerMove`、`captureImgE
 
 ### 5.5 持久化与生命周期（解决 R4、R5）
 
-- **设置**：每组设置是一个 `$state` 对象，修改后防抖 200ms，写入整组快照；读取时用 schema 解析，补默认值、校验范围。删除逐字段写入和事件总线；如需多标签页同步，用 `BroadcastChannel`。
+- **设置**：每组设置是一个 `$state` 对象。同一任务中的修改合并为字段补丁，在微任务末写入；数据库在一个读写事务内读取旧值、合并字段并提交，避免初始化读取失败时默认值覆盖旧设置。读取时用 schema 校验并补默认值，读取期间保留用户新编辑。失败写入在下次编辑时重试，失败初始化在窗口重新获得焦点时重试；不使用事件总线。
 - **图片**：IndexedDB 中直接存 `Blob`（File 本身就是 Blob）。数据库版本 3 的迁移中把旧的 ArrayBuffer 转为 Blob。state 里只存 id。
 - **数据库连接**：`db.ts` 按 `oldVersion` 做迁移，处理 `blocking`，失败后清除缓存的 promise，允许重试（B16）。
 - **图片地址**：在组件里用 `$effect` 从 Blob 创建 object URL，变化或卸载时释放，重复挂载天然安全（B7）。
@@ -439,7 +441,7 @@ Touch Events、Safari Gesture Events、空的 `handlePointerMove`、`captureImgE
 | `MediaQuery`（5.7）                                             | 第 7 节      | `new MediaQuery("prefers-color-scheme: dark")` 实现「跟随系统」主题；`pointer: coarse` 用于控件尺寸                                                                                                                                                  |
 | `on()`（`svelte/events`，5.0）                                  | R2           | 统一注册监听器并返回解绑函数。注意：模板中的 `ontouchstart`/`ontouchmove` 是 passive 的，在里面调用 `preventDefault()` 无效，手势必须用 `on(el, "touchmove", h, { passive: false })`                                                                 |
 | `{@attach}`（5.29）                                             | R6           | 把统一的 Pointer Events 手势层写成 attachment                                                                                                                                                                                                        |
-| `$state.snapshot`（5.0）                                        | 5.5 节持久化 | IndexedDB 不能直接存 `$state` 代理对象。用 `$effect` 读取快照并防抖写入；在 `pagehide` 时立即写入未保存的修改                                                                                                                                        |
+| `$state.snapshot`（5.0）                                        | 5.5 节持久化 | IndexedDB 不能直接存 `$state` 代理对象；在微任务末对待写字段补丁取快照，使用读写事务原子合并。写入不延迟到 `pagehide`，避免卸载时事务被中止                                                                                                          |
 | `$host()`（5.0）                                                | H1           | 用 `$host().shadowRoot.activeElement` 取代手写的 shadow DOM 遍历来判断焦点                                                                                                                                                                           |
 | 实验性的组件内 `await`（5.36）                                  | B5           | `$derived(await getMockup(id))` 天然丢弃过期结果。目前仍是实验特性，暂不建议采用                                                                                                                                                                     |
 | Vitest 浏览器模式（4.0）+ `vitest-browser-svelte`               | E1、手势测试 | 浏览器中有真实布局、shadow DOM、`DataTransfer` 和 pointer capture。jsdom 测 store，浏览器测 App 和 MockupOverlay，可以补上 App.svelte 0% 的覆盖率                                                                                                    |
@@ -605,7 +607,7 @@ Touch Events、Safari Gesture Events、空的 `handlePointerMove`、`captureImgE
 | P2   | 抽出 `model.ts`、`geometry.ts`，overlay store 变薄，位置改为派生值                                 | R1、R3                   | 2–3 天   | ✅ `ee501f6`：对外 API 不变；16 步交互脚本在新旧产物上结果一致                                                                                                                                                               |
 | P3   | 输入统一为 Pointer Events，加 iOS 真机回归                                                         | R6                       | 2 天     | ✅ `fbb56b9`：Touch/Gesture/window 监听全部移除；9 步多点触控脚本与 16 步鼠标键盘脚本在新旧产物上结果一致（iOS 真机仍需人工回归）                                                                                            |
 | P4   | 持久化：settings repository、Blob 存储、数据库版本 3 迁移、bootstrap                               | R4、R5、B16              | 1–2 天   | ✅ `12fcd37`：settings 仓库、Blob 优先存储、DB v3 迁移与 `startApp`（`bootstrap.ts`）全部落地                                                                                                                                |
-| P5   | 底层功能与 UI/UX 彻底 redesign、无障碍修复、工程化清理、精简 CLAUDE.md                             | 第 4、7 节，A1–A8，E1–E9 | 3–4 天   | 🟨 已完成：移除 `dockStore` 250ms 定时器与尺寸 morphing、浮动工具栏 + 独立弹层、状态 HUD、精简 CLAUDE.md、2.6 节的复查修复。未完成：第 4 节目录与命名、大组件拆分（Dock 942 行）、A2 面板焦点管理、A8 触控尺寸、E9、CI（E4） |
+| P5   | 底层功能与 UI/UX 彻底 redesign、无障碍修复、工程化清理、精简 CLAUDE.md                             | 第 4、7 节，A1–A8，E1–E9 | 3–4 天   | 🟨 已完成：移除 `dockStore` 250ms 定时器与尺寸 morphing、浮动工具栏 + 独立弹层、状态 HUD、精简 CLAUDE.md、2.6 节的复查修复、CI（E4）。未完成：第 4 节目录与命名、大组件拆分（Dock 942 行）、A2 面板焦点管理、A8 触控尺寸、E9 |
 
 P0 必须排第一，它的回归测试会守住后面的重构；P2 要在 P3 之前，因为手势层调用的就是 model 的 API。
 

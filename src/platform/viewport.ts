@@ -16,11 +16,8 @@ export function toPagePoint(clientX: number, clientY: number): Position {
 }
 
 /** Width without the scrollbar and full scrollable height: the area the mockup aligns to */
-export function readPageSize(ignoreElement?: HTMLElement | null): Size {
-  const prevHeight = ignoreElement?.style.height;
-  if (ignoreElement) ignoreElement.style.height = "0px";
+export function readPageSize(): Size {
   const { clientWidth, scrollHeight } = document.documentElement;
-  if (ignoreElement) ignoreElement.style.height = prevHeight ?? "";
   return { width: clientWidth, height: scrollHeight };
 }
 
@@ -35,11 +32,8 @@ const CONTENT_CHANGE_THROTTLE = 150;
  * content that grows or shrinks overflows them without resizing them, so DOM changes, resource
  * loads and finished host transitions trigger a (throttled) measurement as well.
  */
-export function observePageSize(
-  onChange: (size: Size) => void,
-  getIgnoreElement?: () => HTMLElement | null
-): () => void {
-  const update = () => onChange(readPageSize(getIgnoreElement?.()));
+export function observePageSize(onChange: (size: Size) => void): () => void {
+  const update = () => onChange(readPageSize());
   update();
 
   let timer: ReturnType<typeof setTimeout> | null = null;

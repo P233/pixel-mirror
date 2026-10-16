@@ -43,14 +43,14 @@ function createDockStore() {
 
   let mode = $state<DockMode>("toolbar");
 
-  let initialized = $state(false);
+  let initialization = $state<"pending" | "ready" | "failed">("pending");
   let initPromise: Promise<void> | null = null;
 
   const effectiveTheme = $derived<Theme>(settings.current.theme ?? systemTheme);
 
   return {
     get initialized() {
-      return initialized;
+      return initialization !== "pending";
     },
     get mode() {
       return mode;
@@ -66,15 +66,16 @@ function createDockStore() {
     },
 
     init: async () => {
-      if (initialized || initPromise) return initPromise;
+      if (initialization === "ready" || initPromise) return initPromise;
 
       initPromise = (async () => {
         try {
           await settings.load();
+          initialization = "ready";
         } catch (e) {
+          initialization = "failed";
           toastStore.showError(e, "Failed to load dock settings");
         } finally {
-          initialized = true;
           initPromise = null;
         }
       })();

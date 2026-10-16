@@ -87,6 +87,15 @@ interface AppSettings {
 
 type SettingGroup = keyof AppSettings;
 
+type GridAppearanceSettings = Omit<GridOverlaySettings, "activeLayoutGridId">;
+type MockupAppearanceSettings = Omit<MockupOverlaySettings, "activeMockupId">;
+
+interface AppearanceSettings {
+  dock: DockSettings;
+  gridOverlay: GridAppearanceSettings;
+  mockupOverlay: MockupAppearanceSettings;
+}
+
 // ============================================
 // Input Types (for creating new entities)
 // ============================================

@@ -14,7 +14,7 @@
   import OpacityIcon from "./icons/OpacityIcon.svelte";
   // Stores
   import { dockStore } from "~/stores/dockStore.svelte";
-  import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
+  import { overlayController } from "~/features/overlay/controller.svelte";
   // Components
   import GridManager from "./GridManager.svelte";
   import MockupManager from "./MockupManager.svelte";
@@ -38,16 +38,16 @@
   let opacitySlideStartValue = 0;
   let opacityPointerType = "";
 
-  // Derived values from mockupOverlayStore
-  let opacityDisplay = $derived(Math.round(mockupOverlayStore.opacity * 100));
-  let scaleDisplay = $derived(mockupOverlayStore.scale === 0.5 ? "½×" : `${mockupOverlayStore.scale}×`);
+  // Derived values from overlayController
+  let opacityDisplay = $derived(Math.round(overlayController.opacity * 100));
+  let scaleDisplay = $derived(overlayController.scale === 0.5 ? "½×" : `${overlayController.scale}×`);
   let nextDockPosition = $derived<DockPosition>(dockStore.position === "top" ? "bottom" : "top");
 
   // Mockup disabled states
-  let isMockupDisabled = $derived(!mockupOverlayStore.activeMockupId);
-  let isHidden = $derived(mockupOverlayStore.isHidden);
-  let isLocked = $derived(mockupOverlayStore.isLocked);
-  let isDragging = $derived(mockupOverlayStore.isDragging);
+  let isMockupDisabled = $derived(!overlayController.activeMockupId);
+  let isHidden = $derived(overlayController.isHidden);
+  let isLocked = $derived(overlayController.isLocked);
+  let isDragging = $derived(overlayController.isDragging);
 
   /**
    * Controls are disabled when:
@@ -104,6 +104,11 @@
     activePopover = null;
   }
 
+  function hasPopoverFocus() {
+    const focused = (dockElement.getRootNode() as Document | ShadowRoot).activeElement;
+    return !!focused?.closest(".dock__popover");
+  }
+
   function handlePopoverMouseLeave(kind: PopoverKind, e: MouseEvent) {
     if (isLastInputTouch() || activePopover !== kind) return;
 
@@ -111,7 +116,7 @@
     const popoverSelector = kind === "opacity" ? ".dock__popover--opacity" : ".dock__popover--placement";
     const target = e.relatedTarget as Element | null;
 
-    if (target?.closest(popoverSelector) || target?.closest(triggerSelector)) {
+    if (hasPopoverFocus() || target?.closest(popoverSelector) || target?.closest(triggerSelector)) {
       cancelPopoverClose();
       return;
     }
@@ -122,7 +127,7 @@
       cancelPopoverClose();
       hoverCloseTimer = setTimeout(() => {
         hoverCloseTimer = null;
-        if (activePopover === kind) {
+        if (activePopover === kind && !hasPopoverFocus()) {
           activePopover = null;
         }
       }, 140);
@@ -133,7 +138,7 @@
   }
 
   function handleAlignmentMouseEnter() {
-    if (isLastInputTouch() || isDragging || isStudioOpen) return;
+    if (isLastInputTouch() || isDragging || isStudioOpen || hasPopoverFocus()) return;
     openPopover("alignment");
   }
 
@@ -161,11 +166,11 @@
       return;
     }
 
-    mockupOverlayStore.setAlignment("top", "center");
+    overlayController.setAlignment("top", "center");
   }
 
   function handleOpacityMouseEnter() {
-    if (isLastInputTouch() || isDragging || isStudioOpen) return;
+    if (isLastInputTouch() || isDragging || isStudioOpen || hasPopoverFocus()) return;
     openPopover("opacity");
   }
 
@@ -183,28 +188,31 @@
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     opacitySliding = true;
     opacitySlideStartX = e.clientX;
-    opacitySlideStartValue = mockupOverlayStore.opacity;
+    opacitySlideStartValue = overlayController.opacity;
   }
 
   function handleOpacityPointerMove(e: PointerEvent) {
     if (!opacitySliding) return;
 
     const dx = e.clientX - opacitySlideStartX;
-    mockupOverlayStore.setOpacity(opacitySlideStartValue + dx / 200);
+    overlayController.setOpacity(opacitySlideStartValue + dx / 200);
   }
 
   function handleOpacityPointerEnd() {
     opacitySliding = false;
   }
 
-  /**
-   * Mouse and keyboard reset the opacity; a touch tap doesn't, since touch is for sliding
-   */
-  function handleOpacityClick(e: MouseEvent) {
+  async function handleOpacityClick(e: MouseEvent) {
     if (isStudioOpen) return;
-    // detail is 0 for keyboard activation, which has no pointerdown
-    if (e.detail !== 0 && opacityPointerType === "touch") return;
-    mockupOverlayStore.resetOpacity();
+    // Keyboard activation has detail 0 and opens the controls without resetting the opacity.
+    if (e.detail === 0) {
+      openPopover("opacity");
+      await tick();
+      dockElement.querySelector<HTMLInputElement>(".opacity-slider")?.focus();
+      return;
+    }
+    if (opacityPointerType === "touch") return;
+    overlayController.resetOpacity();
   }
 
   function handleMockupStudioClick() {
@@ -292,14 +300,14 @@
   class="dock"
   class:at-top={dockStore.position === "top"}
   class:is-dragging={isDragging}
-  hidden={!dockStore.initialized || mockupOverlayStore.isSolidOrZoomed}
+  hidden={!dockStore.initialized || overlayController.isSolidOrZoomed}
 >
   <div class="toolbar" role="toolbar" aria-label="Pixel Mirror controls">
     <button
       class="icon-button"
       data-testid="btn-visibility"
       disabled={isMockupDisabled || isStudioOpen}
-      onclick={mockupOverlayStore.toggleVisibility}
+      onclick={overlayController.toggleVisibility}
       title={isHidden ? "Show mockup" : "Hide mockup"}
     >
       <Icon name={isHidden ? "hide" : "show"} />
@@ -311,7 +319,7 @@
       disabled={isControlsDisabled || isStudioOpen}
       aria-pressed={isLocked}
       aria-label="Lock mockup position"
-      onclick={() => mockupOverlayStore.toggleLock()}
+      onclick={() => overlayController.toggleLock()}
       title={isLocked ? "Unlock mockup position (Click-through active)" : "Lock mockup position (Enable click-through)"}
     >
       <Icon name={isLocked ? "lock" : "unlock"} />
@@ -336,9 +344,9 @@
       onpointercancel={handleOpacityPointerEnd}
       onmouseenter={handleOpacityMouseEnter}
       onmouseleave={handleOpacityMouseLeave}
-      title="Opacity (Click to reset, hover or Ctrl+Scroll to adjust)"
+      title="Opacity (Enter to adjust, click to reset, hover or Ctrl+Scroll)"
     >
-      <OpacityIcon level={mockupOverlayStore.opacity} />
+      <OpacityIcon level={overlayController.opacity} />
     </button>
 
     <span class="toolbar__divider" aria-hidden="true"></span>
@@ -356,14 +364,14 @@
       aria-label="Alignment"
       title="Alignment (click for top center)"
     >
-      <AlignmentIcon x={mockupOverlayStore.alignmentX} y={mockupOverlayStore.alignmentY} />
+      <AlignmentIcon x={overlayController.alignmentX} y={overlayController.alignmentY} />
     </button>
     <button
       class="icon-button scale-button"
       data-testid="btn-scale"
       disabled={isControlsDisabled || isLocked || isStudioOpen}
-      onclick={mockupOverlayStore.cycleScale}
-      aria-label="Scale {mockupOverlayStore.scale}x"
+      onclick={overlayController.cycleScale}
+      aria-label="Scale {overlayController.scale}x"
       title="Scale (1× ↔ ½×)"
     >
       <span class="scale-button__value">{scaleDisplay}</span>
@@ -414,7 +422,7 @@
     <div
       class="dock__popover dock__popover--opacity"
       data-testid="popover-opacity"
-      style:left={popoverAnchorX !== null ? `${popoverAnchorX}px` : undefined}
+      style:--popover-anchor={popoverAnchorX !== null ? `${popoverAnchorX}px` : undefined}
       onmouseenter={cancelPopoverClose}
       onmouseleave={handleOpacityMouseLeave}
     >
@@ -425,7 +433,7 @@
             type="button"
             class="popover-section__reset"
             data-testid="btn-opacity-reset"
-            onclick={() => mockupOverlayStore.resetOpacity()}
+            onclick={() => overlayController.resetOpacity()}
             title="Reset opacity to 50%"
           >
             {opacityDisplay}% · Reset
@@ -435,19 +443,20 @@
           type="range"
           class="opacity-slider"
           data-testid="slider-opacity"
+          aria-label="Mockup opacity"
           min={OPACITY_MIN * 100}
           max={OPACITY_MAX * 100}
           step="5"
           value={opacityDisplay}
-          oninput={(e) => mockupOverlayStore.setOpacity(Number((e.currentTarget as HTMLInputElement).value) / 100)}
+          oninput={(e) => overlayController.setOpacity(Number((e.currentTarget as HTMLInputElement).value) / 100)}
         />
         <div class="chip-row">
           {#each OPACITY_PRESETS as preset (preset)}
             <button
               type="button"
               class="chip"
-              class:active={Math.abs(mockupOverlayStore.opacity - preset) < 0.03}
-              onclick={() => mockupOverlayStore.setOpacity(preset)}
+              class:active={Math.abs(overlayController.opacity - preset) < 0.03}
+              onclick={() => overlayController.setOpacity(preset)}
             >
               {Math.round(preset * 100)}%
             </button>
@@ -471,9 +480,9 @@
             <button
               type="button"
               class="alignment-matrix__dot"
-              class:active={mockupOverlayStore.alignmentY === y && mockupOverlayStore.alignmentX === x}
+              class:active={overlayController.alignmentY === y && overlayController.alignmentX === x}
               data-testid="matrix-{y}-{x}"
-              onclick={() => mockupOverlayStore.setAlignment(y, x)}
+              onclick={() => overlayController.setAlignment(y, x)}
               title="Snap {y} {x}"
               aria-label="Snap {y} {x}"
             >
@@ -496,16 +505,16 @@
   {/if}
 
   {#if showPositionDisplay}
-    <div class="dock__coordinates">{mockupOverlayStore.positionDisplay}</div>
+    <div class="dock__coordinates">{overlayController.positionDisplay}</div>
   {/if}
 </div>
 
-{#if dockStore.initialized && mockupOverlayStore.isSolidOrZoomed}
+{#if dockStore.initialized && overlayController.isSolidOrZoomed}
   <div class="inspect-hud" class:at-top={dockStore.position === "top"} data-testid="inspect-hud">
     <span class="inspect-hud__badge">
-      {mockupOverlayStore.mode === "zoomed" ? "200% Zoom" : "100% Solid"}
+      {overlayController.mode === "zoomed" ? "200% Zoom" : "100% Solid"}
     </span>
-    <span class="inspect-hud__coords">{mockupOverlayStore.positionDisplay}</span>
+    <span class="inspect-hud__coords">{overlayController.positionDisplay}</span>
   </div>
 {/if}
 
@@ -598,7 +607,14 @@
       animation: popover-in 0.16s $timing-function;
 
       &--opacity {
-        min-width: 232px;
+        --opacity-popover-width: min(232px, 100%);
+        left: clamp(
+          calc(var(--opacity-popover-width) / 2),
+          var(--popover-anchor, 50%),
+          calc(100% - var(--opacity-popover-width) / 2)
+        );
+        width: var(--opacity-popover-width);
+        min-width: 0;
       }
 
       &--placement {

@@ -11,13 +11,7 @@ function mount() {
   if (!document.querySelector(TAG_NAME)) {
     document.body.appendChild(document.createElement(TAG_NAME));
   }
-
-  // Sets html element position to relative.
-  // This is the minimal-cost solution for overlay positioning.
-  // Most host projects should be unaffected by this change.
-  document.documentElement.style.position = "relative";
 }
-
 // A script that runs from <head> without `defer` (or is inserted dynamically) runs before <body> exists
 if (document.body) {
   mount();

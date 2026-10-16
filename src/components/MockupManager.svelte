@@ -8,7 +8,7 @@
   import { blobSrc } from "~/platform/blobSrc";
   // Stores
   import { dockStore } from "~/stores/dockStore.svelte";
-  import { mockupManagerStore } from "~/stores/mockupManagerStore.svelte";
+  import { mockupStore } from "~/stores/mockupStore.svelte";
 
   let confirmingClear = $state(false);
 
@@ -34,21 +34,21 @@
   function handleInputChange(e: Event) {
     const target = e.target as HTMLInputElement;
     if (target.files) {
-      mockupManagerStore.upload(Array.from(target.files));
+      mockupStore.upload(Array.from(target.files));
     }
     target.value = "";
   }
 
   function handleDelete(e: Event, id: string) {
     e.stopPropagation();
-    if (mockupManagerStore.mockups.length <= 1) {
+    if (mockupStore.mockups.length <= 1) {
       confirmingClear = false;
     }
-    mockupManagerStore.delete(id);
+    mockupStore.delete(id);
   }
 
   function handleSelect(id: string) {
-    mockupManagerStore.select(id);
+    mockupStore.select(id);
     dockStore.enterToolbar();
   }
 
@@ -58,16 +58,16 @@
       return;
     }
     confirmingClear = false;
-    mockupManagerStore.clear();
+    mockupStore.clear();
   }
 </script>
 
-{#if mockupManagerStore.initialized}
+{#if mockupStore.initialized}
   <div class="container" role="region" aria-label="Mockup Manager">
     <header class="studio-header">
       <div class="studio-header__title-group">
         <h3 class="studio-header__title">Mockup Studio</h3>
-        <span class="studio-header__badge">{mockupManagerStore.mockups.length}</span>
+        <span class="studio-header__badge">{mockupStore.mockups.length}</span>
       </div>
       <span class="studio-header__hint">Drop PNG, JPG, WebP, or GIF anywhere on the page</span>
     </header>
@@ -82,8 +82,8 @@
           <input type="file" accept={ALLOWED_MIME_TYPES.join(",")} multiple onchange={handleInputChange} />
         </label>
 
-        {#each mockupManagerStore.mockups as mockup (mockup.id)}
-          {@const isActive = mockupManagerStore.activeMockupId === mockup.id}
+        {#each mockupStore.mockups as mockup (mockup.id)}
+          {@const isActive = mockupStore.activeMockupId === mockup.id}
           {@const metaText = formatMeta(mockup)}
           <div class="mockup" class:active={isActive}>
             <button class="mockup__preview" type="button" disabled={isActive} onclick={() => handleSelect(mockup.id)}>
@@ -111,7 +111,7 @@
       </div>
     </div>
     <footer class="footer">
-      {#if confirmingClear && mockupManagerStore.mockups.length > 0}
+      {#if confirmingClear && mockupStore.mockups.length > 0}
         <button
           class="footer__button footer__button--ghost"
           type="button"
@@ -123,14 +123,14 @@
       {/if}
       <button
         class="footer__button"
-        class:footer__button--ghost={!(confirmingClear && mockupManagerStore.mockups.length > 0)}
-        class:footer__button--danger={confirmingClear && mockupManagerStore.mockups.length > 0}
+        class:footer__button--ghost={!(confirmingClear && mockupStore.mockups.length > 0)}
+        class:footer__button--danger={confirmingClear && mockupStore.mockups.length > 0}
         type="button"
         data-testid="btn-clear"
         onclick={handleClearClick}
-        disabled={mockupManagerStore.mockups.length === 0}
+        disabled={mockupStore.mockups.length === 0}
       >
-        {confirmingClear && mockupManagerStore.mockups.length > 0 ? "Confirm Clear?" : "Clear Mockups"}
+        {confirmingClear && mockupStore.mockups.length > 0 ? "Confirm Clear?" : "Clear Mockups"}
       </button>
       <button class="footer__button" type="button" data-testid="btn-close" onclick={dockStore.enterToolbar}>
         Close

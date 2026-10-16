@@ -1,6 +1,16 @@
+// Mockup opacity
+const OPACITY_STEP = 0.05;
+const OPACITY_MIN = 0.1;
+const OPACITY_MAX = 0.9;
+const OPACITY_DEFAULT = 0.5;
+
 // ============================================
 // Grid Settings
 // ============================================
+
+const GRID_OPACITY_MIN = 0.01;
+const GRID_OPACITY_MAX = 0.99;
+const GRID_OPACITY_DEFAULT = 0.1;
 
 const DEFAULT_GRID_TEMPLATE: Omit<LayoutGridConfig, "id" | "createdAt"> = {
   width: "1044px",
@@ -12,9 +22,9 @@ const DEFAULT_GRID_TEMPLATE: Omit<LayoutGridConfig, "id" | "createdAt"> = {
 
 const DEFAULT_GRID_OVERLAY_SETTINGS: Omit<GridOverlaySettings, "activeLayoutGridId"> = {
   showLayoutGrid: false,
-  layoutGridColor: "rgba(0, 0, 255, 0.05)",
+  layoutGridColor: `rgba(0, 0, 255, ${GRID_OPACITY_DEFAULT})`,
   showSpacingGrid: false,
-  spacingGridColor: "rgba(255, 0, 0, 0.05)",
+  spacingGridColor: `rgba(255, 0, 0, ${GRID_OPACITY_DEFAULT})`,
   spacingGridHeight: "8px"
 };
 
@@ -23,12 +33,6 @@ const DEFAULT_GRID_OVERLAY_SETTINGS: Omit<GridOverlaySettings, "activeLayoutGrid
 // ============================================
 
 const MOCKUP_THUMBNAIL_SIZE = 352;
-
-// Opacity settings
-const OPACITY_STEP = 0.05;
-const OPACITY_MIN = 0.1;
-const OPACITY_MAX = 0.9;
-const OPACITY_DEFAULT = 0.5;
 
 // Scale settings
 const SCALE_OPTIONS = [0.5, 1] as const;
@@ -78,6 +82,9 @@ export {
   DRAG_THRESHOLD_GLOBAL,
   GRID_COLUMNS_MAX,
   GRID_COLUMNS_MIN,
+  GRID_OPACITY_DEFAULT,
+  GRID_OPACITY_MAX,
+  GRID_OPACITY_MIN,
   MAX_FILE_SIZE,
   MOCKUP_THUMBNAIL_SIZE,
   OPACITY_DEFAULT,

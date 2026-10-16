@@ -1,9 +1,9 @@
 /**
- * Mockup Overlay Store
+ * Overlay Controller
  *
  * Holds the overlay state and applies user actions to it. The state model and the
  * geometry are pure functions in ~/features/overlay; this store owns the reactive
- * state, persistence and loading the mockup image.
+ * interaction state and loading the mockup image. Persistent state belongs to mockupStore.
  *
  * Derived 5-state mode (see model.ts):
  * - visible:   Default state. Can drag, adjust opacity, scale, align
@@ -41,7 +41,6 @@ import {
   alignmentX as getAlignmentX,
   alignmentY as getAlignmentY,
   can,
-  DEFAULT_PLACEMENT,
   deriveMode,
   describePlacement,
   freePlacement,
@@ -50,49 +49,26 @@ import {
   moveAlongAxes,
   placementFromSettings,
   type Interaction,
-  type OverlayMode,
   type Placement,
   type View
 } from "~/features/overlay/model";
 // Platform
-import { createSettings, type SettingsSchema } from "~/platform/settings.svelte";
+import { mockupStore } from "~/stores/mockupStore.svelte";
 import { readViewportCenter, toPagePoint } from "~/platform/viewport";
 // Database
-import { getMockupImage } from "./database";
+import { getMockupImage } from "~/platform/database";
 // Stores
-import { toastStore } from "./toastStore.svelte";
+import { toastStore } from "~/stores/toastStore.svelte";
 // Utils
-import { clamp, roundTo } from "./utils";
+import { clamp, roundTo } from "~/stores/utils";
 
-export type MockupOverlayMode = OverlayMode;
-
-const DEFAULT_OVERLAY_SETTINGS: MockupOverlaySettings = {
-  activeMockupId: null,
-  isHidden: false,
-  isLocked: false,
-  opacity: OPACITY_DEFAULT,
-  position: { x: 0, y: 0 },
-  alignmentX: getAlignmentX(DEFAULT_PLACEMENT),
-  alignmentY: getAlignmentY(DEFAULT_PLACEMENT),
-  scale: 1
-};
-
-const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
-
-const OVERLAY_SETTINGS_SCHEMA: SettingsSchema<MockupOverlaySettings> = {
-  activeMockupId: (value) => value === null || typeof value === "string",
-  isHidden: (value) => typeof value === "boolean",
-  isLocked: (value) => typeof value === "boolean",
-  opacity: (value) => isFiniteNumber(value) && value >= OPACITY_MIN && value <= OPACITY_MAX,
-  position: (value) => isFiniteNumber((value as Position)?.x) && isFiniteNumber((value as Position)?.y),
-  alignmentX: (value) => value === null || value === "left" || value === "center" || value === "right",
-  alignmentY: (value) => value === null || value === "top" || value === "bottom",
-  scale: (value) => SCALE_OPTIONS.includes(value as (typeof SCALE_OPTIONS)[number])
-};
-
-function createMockupOverlayStore() {
-  // Persisted state
-  const settings = createSettings("mockupOverlay", DEFAULT_OVERLAY_SETTINGS, OVERLAY_SETTINGS_SCHEMA);
+function createOverlayController() {
+  const settings = {
+    get current() {
+      return mockupStore.appearance;
+    },
+    update: mockupStore.updateAppearance
+  };
   const isHidden = $derived(settings.current.isHidden);
   const isLocked = $derived(settings.current.isLocked);
   const opacity = $derived(settings.current.opacity);
@@ -118,10 +94,6 @@ function createMockupOverlayStore() {
   const position = $derived<Position>({ x: transform.x, y: transform.y });
   const positionDisplay = $derived(describePlacement(placement, position));
 
-  // Initialization
-  let initialized = $state(false);
-  let initPromise: Promise<void> | null = null;
-
   // Incremented on every load so a slow, superseded load can't overwrite a newer one
   let loadToken = 0;
 
@@ -135,54 +107,53 @@ function createMockupOverlayStore() {
   // Internal helpers
   // ============================================
 
-  function clearLoadedMockup() {
+  function clearMockupSession() {
     if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
     activeMockupUrl = null;
     loadedMockupId = null;
     mockupSize = { width: 0, height: 0 };
+    interaction = IDLE;
   }
 
   async function loadMockup(id: string | null) {
     const token = ++loadToken;
 
     if (!id) {
-      clearLoadedMockup();
-      return;
+      clearMockupSession();
+      return true;
     }
 
-    if (loadedMockupId === id && activeMockupUrl) return;
+    if (loadedMockupId === id && activeMockupUrl) return true;
 
     try {
       const image = await getMockupImage(id);
-      if (token !== loadToken) return;
+      if (token !== loadToken) return loadedMockupId === mockupStore.activeMockupId;
 
       if (!image) {
         toastStore.showError(new Error(`Mockup not found.`));
-        clearLoadedMockup();
-        return;
+        clearMockupSession();
+        return true;
       }
 
-      if (activeMockupUrl) URL.revokeObjectURL(activeMockupUrl);
+      clearMockupSession();
       const newUrl = URL.createObjectURL(image);
       activeMockupUrl = newUrl;
-      loadedMockupId = id;
 
-      const img = new Image();
-      img.onload = () => {
-        if (token !== loadToken) return;
-        // The aligned position is derived from this size
-        mockupSize = { width: img.naturalWidth, height: img.naturalHeight };
-      };
-      img.onerror = () => {
-        if (token !== loadToken) return;
-        toastStore.showError(new Error(`Failed to load mockup image.`));
-        mockupSize = { width: 0, height: 0 };
-      };
-      img.src = newUrl;
+      const size = await new Promise<Size>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        img.onerror = () => reject(new Error("Failed to load mockup image."));
+        img.src = newUrl;
+      });
+      if (token !== loadToken) return loadedMockupId === mockupStore.activeMockupId;
+      mockupSize = size;
+      loadedMockupId = id;
+      return true;
     } catch (e) {
-      if (token !== loadToken) return;
+      if (token !== loadToken) return loadedMockupId === mockupStore.activeMockupId;
       toastStore.showError(e, "Failed to load mockup");
-      clearLoadedMockup();
+      clearMockupSession();
+      return false;
     }
   }
 
@@ -245,11 +216,8 @@ function createMockupOverlayStore() {
 
   return {
     // Getters
-    get initialized() {
-      return initialized;
-    },
     get activeMockupId() {
-      return settings.current.activeMockupId;
+      return mockupStore.activeMockupId;
     },
     get activeMockupUrl() {
       return activeMockupUrl;
@@ -303,28 +271,6 @@ function createMockupOverlayStore() {
       return positionDisplay;
     },
 
-    // ============================================
-    // Initialization
-    // ============================================
-
-    init: async () => {
-      if (initialized || initPromise) return initPromise;
-
-      initPromise = (async () => {
-        try {
-          await settings.load();
-          await loadMockup(settings.current.activeMockupId);
-        } catch (e) {
-          toastStore.showError(e, "Failed to load mockup overlay settings");
-        } finally {
-          initialized = true;
-          initPromise = null;
-        }
-      })();
-
-      return initPromise;
-    },
-
     /** The page area the mockup aligns to; kept up to date by the overlay component */
     setPageSize: (size: Size) => {
       if (size.width !== pageSize.width || size.height !== pageSize.height) pageSize = size;
@@ -334,10 +280,11 @@ function createMockupOverlayStore() {
     // Mockup management
     // ============================================
 
-    setActiveMockup: (id: string | null) => {
-      // A newly selected mockup is shown and movable
-      settings.update(id ? { activeMockupId: id, isHidden: false, isLocked: false } : { activeMockupId: null });
-      loadMockup(id);
+    sync: () => loadMockup(mockupStore.activeMockupId),
+
+    cleanup: () => {
+      ++loadToken;
+      clearMockupSession();
     },
 
     // ============================================
@@ -549,4 +496,4 @@ function createMockupOverlayStore() {
   };
 }
 
-export const mockupOverlayStore = createMockupOverlayStore();
+export const overlayController = createOverlayController();

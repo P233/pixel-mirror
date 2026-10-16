@@ -1,6 +1,7 @@
 <script lang="ts">
   // Svelte
   import { onMount } from "svelte";
+  import { on } from "svelte/events";
 
   // Features
   import { overlayGestures } from "~/features/overlay/gestures";
@@ -10,17 +11,22 @@
 
   // Stores
   import { dockStore } from "~/stores/dockStore.svelte";
-  import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
+  import { overlayController } from "~/features/overlay/controller.svelte";
 
-  let viewportElement = $state<HTMLDivElement | null>(null);
+  let scrollPosition = $state({ x: window.scrollX, y: window.scrollY });
 
-  // The aligned position depends on the page size, which can change on resize or layout shifts
-  onMount(() =>
-    observePageSize(
-      (size) => mockupOverlayStore.setPageSize(size),
-      () => viewportElement
-    )
-  );
+  onMount(() => {
+    const stopSize = observePageSize((size) => overlayController.setPageSize(size));
+    const updateScroll = () => {
+      scrollPosition = { x: window.scrollX, y: window.scrollY };
+    };
+    updateScroll();
+    const stopScroll = on(window, "scroll", updateScroll, { passive: true });
+    return () => {
+      stopSize();
+      stopScroll();
+    };
+  });
 
   /**
    * Pointer events on the overlay are only handled when the dock is in toolbar mode
@@ -36,58 +42,69 @@
     locked: "default"
   };
 
-  let cursor = $derived(isInteractive ? CURSOR_MAP[mockupOverlayStore.mode] : "default");
+  let cursor = $derived(isInteractive ? CURSOR_MAP[overlayController.mode] : "default");
 
   // Locked mode uses pointer-events: none so clicks, hovers, and scrolling pass through to the host page
-  let pointerEvents = $derived(isInteractive && mockupOverlayStore.mode !== "locked" ? "auto" : "none");
+  let pointerEvents = $derived(isInteractive && overlayController.mode !== "locked" ? "auto" : "none");
 
   let transform = $derived(
-    `translate3d(${mockupOverlayStore.position.x}px, ${mockupOverlayStore.position.y}px, 0) scale(${mockupOverlayStore.scale})`
+    `translate3d(${overlayController.position.x}px, ${overlayController.position.y}px, 0) scale(${overlayController.scale})`
   );
 
   // Dynamic touch-action based on mode:
   // - locked: allow native scrolling with momentum (pan-x pan-y)
   // - other modes: disable all browser gestures (none) so the gesture handlers get every pointer event
-  let touchAction = $derived(mockupOverlayStore.mode === "locked" ? "pan-x pan-y" : "none");
+  let touchAction = $derived(overlayController.mode === "locked" ? "pan-x pan-y" : "none");
 
   // Disable transition during dragging, zoom panning, and solid mode for immediate response
   let transition = $derived(
-    mockupOverlayStore.isDragging || mockupOverlayStore.isZoomPanning || mockupOverlayStore.mode === "solid"
+    overlayController.isDragging || overlayController.isZoomPanning || overlayController.mode === "solid"
       ? "none"
       : "transform 0.2s ease-out"
   );
 </script>
 
-{#if !mockupOverlayStore.isHidden && mockupOverlayStore.activeMockupUrl}
-  <div
-    bind:this={viewportElement}
-    class="mockup-viewport"
-    style:height={mockupOverlayStore.pageSize?.height ? `${mockupOverlayStore.pageSize.height}px` : undefined}
-  >
-    <img
-      {@attach overlayGestures(mockupOverlayStore, () => isInteractive)}
-      draggable="false"
-      class="mockup-overlay"
-      src={mockupOverlayStore.activeMockupUrl}
-      alt="Mockup Overlay"
-      style:transform
-      style:transition
-      style:cursor
-      style:pointer-events={pointerEvents}
-      style:opacity={mockupOverlayStore.effectiveOpacity}
-      style:visibility={mockupOverlayStore.mockupSize.width ? undefined : "hidden"}
-      style:touch-action={touchAction}
-    />
+{#if !overlayController.isHidden && overlayController.activeMockupUrl}
+  <div class="mockup-viewport">
+    <div
+      class="mockup-document"
+      style:width={`${overlayController.pageSize.width}px`}
+      style:height={`${overlayController.pageSize.height}px`}
+      style:transform={`translate3d(${-scrollPosition.x}px, ${-scrollPosition.y}px, 0)`}
+    >
+      <img
+        {@attach overlayGestures(overlayController, () => isInteractive)}
+        draggable="false"
+        class="mockup-overlay"
+        src={overlayController.activeMockupUrl}
+        alt="Mockup Overlay"
+        style:transform
+        style:transition
+        style:cursor
+        style:pointer-events={pointerEvents}
+        style:opacity={overlayController.effectiveOpacity}
+        style:visibility={overlayController.mockupSize.width ? undefined : "hidden"}
+        style:touch-action={touchAction}
+      />
+    </div>
   </div>
 {/if}
 
 <style lang="scss">
-  // Clips the mockup at the host page boundaries so zooming (e.g. 2x) or dragging past
-  // the edges never expands the host document or introduces scrollbars.
+  // A fixed clip keeps the document-sized alignment layer out of host layout.
   .mockup-viewport {
-    position: absolute;
+    position: fixed;
     inset: 0;
     z-index: $max-z-index - 3;
+    overflow: hidden;
+    overflow: clip;
+    pointer-events: none;
+  }
+
+  .mockup-document {
+    position: absolute;
+    top: 0;
+    left: 0;
     overflow: hidden;
     overflow: clip;
     pointer-events: none;

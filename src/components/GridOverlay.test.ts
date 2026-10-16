@@ -5,12 +5,12 @@
 import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GridOverlay from "./GridOverlay.svelte";
-import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
-import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
+import { gridStore } from "~/stores/gridStore.svelte";
+import { overlayController } from "~/features/overlay/controller.svelte";
 
 // Mock stores
-vi.mock("~/stores/gridOverlayStore.svelte", () => ({
-  gridOverlayStore: {
+vi.mock("~/stores/gridStore.svelte", () => ({
+  gridStore: {
     showSpacingGrid: false,
     spacingGridColor: "rgba(255, 0, 0, 0.05)",
     spacingGridHeight: "8px",
@@ -22,14 +22,14 @@ vi.mock("~/stores/gridOverlayStore.svelte", () => ({
   }
 }));
 
-vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
-  mockupOverlayStore: {
+vi.mock("~/features/overlay/controller.svelte", () => ({
+  overlayController: {
     isSolidOrZoomed: false
   }
 }));
 
 // Get typed references to mocks (use `as unknown as` to bypass type checking for mocked modules)
-const mockGridStore = gridOverlayStore as unknown as {
+const mockGridStore = gridStore as unknown as {
   showSpacingGrid: boolean;
   spacingGridColor: string;
   spacingGridHeight: string;
@@ -40,7 +40,7 @@ const mockGridStore = gridOverlayStore as unknown as {
   cleanup: ReturnType<typeof vi.fn>;
 };
 
-const mockMockupStore = mockupOverlayStore as {
+const mockMockupStore = overlayController as {
   isSolidOrZoomed: boolean;
 };
 
@@ -238,7 +238,7 @@ describe("GridOverlay component", () => {
 
   // Store interface verification
   describe("store interfaces", () => {
-    it("gridOverlayStore has correct interface shape", () => {
+    it("gridStore has correct interface shape", () => {
       const mockStore = {
         showLayoutGrid: false,
         activeLayoutGrid: undefined,

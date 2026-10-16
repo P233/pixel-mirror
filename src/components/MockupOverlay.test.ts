@@ -9,8 +9,8 @@ import { cleanup, render } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OverlayMode } from "~/features/overlay/model";
 
-vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
-  mockupOverlayStore: {
+vi.mock("~/features/overlay/controller.svelte", () => ({
+  overlayController: {
     isHidden: false,
     activeMockupUrl: "blob:test-url" as string | null,
     position: { x: 100, y: 200 },
@@ -22,7 +22,6 @@ vi.mock("~/stores/mockupOverlayStore.svelte", () => ({
     isSolidOrZoomed: false,
     mockupSize: { width: 800, height: 1500 },
     pageSize: { width: 1024, height: 3000 },
-    init: vi.fn(),
     setPageSize: vi.fn(),
     beginDrag: vi.fn(),
     dragTo: vi.fn(),
@@ -43,12 +42,12 @@ vi.mock("~/stores/dockStore.svelte", () => ({
 
 import MockupOverlay from "./MockupOverlay.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
-import { mockupOverlayStore } from "~/stores/mockupOverlayStore.svelte";
+import { overlayController } from "~/features/overlay/controller.svelte";
 
 type MockStore = {
-  -readonly [K in keyof typeof mockupOverlayStore]: (typeof mockupOverlayStore)[K];
+  -readonly [K in keyof typeof overlayController]: (typeof overlayController)[K];
 };
-const store = mockupOverlayStore as unknown as MockStore;
+const store = overlayController as unknown as MockStore;
 const dock = dockStore as { mode: DockMode };
 
 const renderOverlay = () => {
@@ -56,6 +55,7 @@ const renderOverlay = () => {
   return {
     ...result,
     viewport: () => result.container.querySelector<HTMLDivElement>(".mockup-viewport"),
+    documentLayer: () => result.container.querySelector<HTMLDivElement>(".mockup-document"),
     img: () => result.container.querySelector<HTMLImageElement>(".mockup-overlay")
   };
 };
@@ -85,10 +85,11 @@ describe("MockupOverlay component", () => {
 
   describe("conditional rendering", () => {
     it("renders the image inside a clipping viewport when visible with a mockup", () => {
-      const { viewport, img } = renderOverlay();
+      const { viewport, documentLayer, img } = renderOverlay();
 
       expect(viewport()).toBeInTheDocument();
-      expect(viewport()?.style.height).toBe("3000px");
+      expect(viewport()?.style.height).toBe("");
+      expect(documentLayer()?.style.height).toBe("3000px");
       expect(img()).toBeInTheDocument();
       expect(viewport()?.contains(img())).toBe(true);
       expect(img()?.getAttribute("src")).toBe("blob:test-url");
@@ -112,14 +113,30 @@ describe("MockupOverlay component", () => {
   });
 
   describe("style bindings", () => {
-    it("applies transform with position and scale while keeping viewport bounded to host page height", () => {
+    it("keeps the document clip and image transform separate", () => {
       store.position = { x: -200, y: -100 };
       store.scale = 2;
       store.pageSize = { width: 1024, height: 2400 };
 
-      const { viewport, img } = renderOverlay();
+      const { documentLayer, img } = renderOverlay();
       expect(img()?.style.transform).toBe("translate3d(-200px, -100px, 0) scale(2)");
-      expect(viewport()?.style.height).toBe("2400px");
+      expect(documentLayer()?.style.height).toBe("2400px");
+      expect(documentLayer()?.style.width).toBe("1024px");
+    });
+
+    it("compensates scrolling immediately without changing the image transform", async () => {
+      const { documentLayer, img, unmount } = renderOverlay();
+      const transform = img()?.style.transform;
+      vi.spyOn(window, "scrollX", "get").mockReturnValue(120);
+      vi.spyOn(window, "scrollY", "get").mockReturnValue(803);
+      window.dispatchEvent(new Event("scroll"));
+      const { tick } = await import("svelte");
+      await tick();
+      expect(documentLayer()?.style.transform).toBe("translate3d(-120px, -803px, 0)");
+      expect(documentLayer()?.style.transition).toBe("");
+      expect(img()?.style.transform).toBe(transform);
+      unmount();
+      vi.restoreAllMocks();
     });
 
     it("applies the effective opacity", () => {
@@ -192,14 +209,14 @@ describe("MockupOverlay component", () => {
   });
 
   describe("lifecycle", () => {
-    it("reports the page size to the store on mount and on resize, collapsing the viewport during measurement", () => {
+    it("measures the host without changing the document clip and stops observing on unmount", () => {
       Object.defineProperty(document.documentElement, "clientWidth", { value: 1024, configurable: true });
-      const { viewport, unmount } = renderOverlay();
+      const { documentLayer, unmount } = renderOverlay();
 
       let heightDuringRead = "";
       Object.defineProperty(document.documentElement, "scrollHeight", {
         get: () => {
-          heightDuringRead = viewport()?.style.height ?? "";
+          heightDuringRead = documentLayer()?.style.height ?? "";
           return 1800;
         },
         configurable: true
@@ -207,8 +224,8 @@ describe("MockupOverlay component", () => {
 
       Object.defineProperty(document.documentElement, "clientWidth", { value: 1440, configurable: true });
       window.dispatchEvent(new Event("resize"));
-      expect(heightDuringRead).toBe("0px");
-      expect(viewport()?.style.height).toBe("3000px");
+      expect(heightDuringRead).toBe("3000px");
+      expect(documentLayer()?.style.height).toBe("3000px");
       expect(store.setPageSize).toHaveBeenLastCalledWith({ width: 1440, height: 1800 });
 
       unmount();

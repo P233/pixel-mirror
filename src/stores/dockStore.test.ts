@@ -10,9 +10,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the database module
-vi.mock("./database", () => ({
+vi.mock("~/platform/database", () => ({
   getSettings: vi.fn().mockResolvedValue(undefined),
-  saveSettings: vi.fn().mockResolvedValue(undefined)
+  updateSettings: vi.fn().mockResolvedValue(undefined)
 }));
 
 // Mock toastStore
@@ -27,21 +27,21 @@ describe("dockStore", () => {
   let flushSettings: typeof import("~/platform/settings.svelte").flushSettings;
   let dockStore: typeof import("./dockStore.svelte").dockStore;
   let getSettings: ReturnType<typeof vi.fn>;
-  let saveSettings: ReturnType<typeof vi.fn>;
+  let updateSettings: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
     flushSettings = (await import("~/platform/settings.svelte")).flushSettings;
 
     // Get fresh mocks
-    const dbModule = await import("./database");
+    const dbModule = await import("~/platform/database");
 
     getSettings = dbModule.getSettings as ReturnType<typeof vi.fn>;
-    saveSettings = dbModule.saveSettings as ReturnType<typeof vi.fn>;
+    updateSettings = dbModule.updateSettings as ReturnType<typeof vi.fn>;
 
     // Reset mocks
     getSettings.mockReset().mockResolvedValue({});
-    saveSettings.mockReset().mockResolvedValue(undefined);
+    updateSettings.mockReset().mockResolvedValue(undefined);
 
     // Import fresh store
     const module = await import("./dockStore.svelte");
@@ -93,6 +93,19 @@ describe("dockStore", () => {
 
       expect(dockStore.position).toBe("bottom");
       expect(dockStore.theme).toBe("light");
+    });
+
+    it("retries a failed load without hiding the toolbar", async () => {
+      getSettings.mockRejectedValueOnce(new Error("temporary read failure"));
+      await dockStore.init();
+      expect(dockStore.initialized).toBe(true);
+
+      getSettings.mockResolvedValue({ position: "top", theme: "dark" });
+      await dockStore.init();
+
+      expect(dockStore.position).toBe("top");
+      expect(dockStore.theme).toBe("dark");
+      expect(getSettings).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -173,7 +186,7 @@ describe("dockStore", () => {
       dockStore.togglePosition();
 
       await flushSettings();
-      expect(saveSettings).toHaveBeenLastCalledWith("dock", expect.objectContaining({ position: "top" }));
+      expect(updateSettings).toHaveBeenLastCalledWith("dock", expect.objectContaining({ position: "top" }));
     });
   });
 
@@ -211,7 +224,7 @@ describe("dockStore", () => {
       dockStore.toggleTheme();
 
       await flushSettings();
-      expect(saveSettings).toHaveBeenLastCalledWith("dock", expect.objectContaining({ theme: "dark" }));
+      expect(updateSettings).toHaveBeenLastCalledWith("dock", expect.objectContaining({ theme: "dark" }));
     });
 
     it("follows system prefers-color-scheme dynamically and still allows manual toggle", async () => {

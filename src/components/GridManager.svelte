@@ -6,18 +6,17 @@
   import Icon from "./icons/Icon.svelte";
   // Stores
   import { dockStore } from "~/stores/dockStore.svelte";
-  import { gridManagerStore } from "~/stores/gridManagerStore.svelte";
-  import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
+  import { gridStore } from "~/stores/gridStore.svelte";
   // Utils
   import { withDefaultUnit } from "~/utils/validation";
 
-  const SPACING_HEIGHT_PRESETS = ["4px", "8px", "12px", "16px"] as const;
+  const SPACING_HEIGHT_PRESETS = ["4px", "8px", "16px"] as const;
 
   const uid = $props.id();
 
   // Editable draft: resets only when the stored height changes (e.g., after save or reset), so saving
   // another field doesn't discard an unsaved edit here (the color fields keep their own drafts)
-  let spacingGridHeightInput = $derived(gridOverlayStore.spacingGridHeight);
+  let spacingGridHeightInput = $derived(gridStore.spacingGridHeight);
 
   // The new-grid form is folded away until needed, which keeps the panel short
   let isAddingGrid = $state(false);
@@ -29,6 +28,7 @@
   let newGridGutterOutside = $state(true);
   let newGridPosition = $state<LayoutGridPosition>("center");
   let confirmingReset = $state(false);
+  let resetButton = $state<HTMLButtonElement>();
 
   let canAddGrid = $derived(
     newGridWidth.trim() && newGridGutter.trim() && /^\d+$/.test(newGridColumns) && Number(newGridColumns) > 0
@@ -51,11 +51,11 @@
   function commitSpacingHeight() {
     const trimmed = spacingGridHeightInput.trim();
     if (!trimmed) {
-      spacingGridHeightInput = gridOverlayStore.spacingGridHeight;
+      spacingGridHeightInput = gridStore.spacingGridHeight;
       return;
     }
-    if (trimmed !== gridOverlayStore.spacingGridHeight) {
-      gridManagerStore.updateSpacingGridHeight(trimmed);
+    if (trimmed !== gridStore.spacingGridHeight) {
+      gridStore.updateSpacingGridHeight(trimmed);
     }
   }
 
@@ -80,7 +80,7 @@
     e.preventDefault();
     if (!canAddGrid) return;
 
-    const id = await gridManagerStore.add({
+    const id = await gridStore.add({
       width: withDefaultUnit(newGridWidth),
       columns: Number(newGridColumns),
       gutterWidth: withDefaultUnit(newGridGutter),
@@ -91,19 +91,30 @@
     if (id) await closeNewGridForm();
   }
 
-  function handleResetClick() {
+  async function handleResetClick() {
+    if (gridStore.isResetting) return;
     if (!confirmingReset) {
       confirmingReset = true;
       return;
     }
-    confirmingReset = false;
-    gridManagerStore.reset();
+    const root = resetButton?.getRootNode() as Document | ShadowRoot | undefined;
+    const hadFocus = root?.activeElement === resetButton;
+    const succeeded = await gridStore.reset();
+    if (succeeded) {
+      confirmingReset = false;
+      isAddingGrid = false;
+      newGridWidth = "";
+      newGridColumns = "";
+      newGridGutter = "";
+    }
+    await tick();
+    if (hadFocus && resetButton?.isConnected) resetButton.focus();
   }
 </script>
 
-{#if gridManagerStore.initialized}
+{#if gridStore.initialized}
   <div class="container" role="region" aria-label="Grid Manager">
-    <div class="inner">
+    <div class="inner" inert={gridStore.isResetting}>
       <section class="section">
         <header class="section__header">
           <div class="section__heading">
@@ -113,11 +124,11 @@
           <button
             type="button"
             role="switch"
-            aria-checked={gridOverlayStore.showSpacingGrid}
+            aria-checked={gridStore.showSpacingGrid}
             aria-labelledby="{uid}-spacing-title"
             class="switch"
             data-testid="btn-toggle-spacing"
-            onclick={gridManagerStore.toggleSpacingGrid}
+            onclick={gridStore.toggleSpacingGrid}
           >
             <span class="switch__thumb"></span>
           </button>
@@ -125,8 +136,8 @@
 
         <div
           class="section__body fields"
-          class:disabled={!gridOverlayStore.showSpacingGrid}
-          inert={!gridOverlayStore.showSpacingGrid}
+          class:disabled={!gridStore.showSpacingGrid}
+          inert={!gridStore.showSpacingGrid}
         >
           <div class="field">
             <label class="field__label" for="{uid}-spacing-height">Height</label>
@@ -136,6 +147,7 @@
                 class="control control--short"
                 type="text"
                 placeholder="8px"
+                title="Stripe height in px or rem"
                 bind:value={spacingGridHeightInput}
                 onchange={commitSpacingHeight}
                 onkeydown={(e) => handleFieldKeydown(e, commitSpacingHeight)}
@@ -146,8 +158,8 @@
                   <button
                     type="button"
                     class="preset"
-                    aria-pressed={gridOverlayStore.spacingGridHeight === preset}
-                    onclick={() => gridManagerStore.updateSpacingGridHeight(preset)}
+                    aria-pressed={gridStore.spacingGridHeight === preset}
+                    onclick={() => gridStore.updateSpacingGridHeight(preset)}
                   >
                     {preset}
                   </button>
@@ -157,12 +169,12 @@
           </div>
 
           <ColorField
-            value={gridOverlayStore.spacingGridColor}
+            value={gridStore.spacingGridColor}
             fallback="#ff0000"
             pickerLabel="Pick spacing grid color"
             opacityLabel="Spacing grid opacity"
             pickerTestId="picker-spacing-color"
-            onchange={gridManagerStore.updateSpacingGridColor}
+            onchange={gridStore.updateSpacingGridColor}
           />
         </div>
       </section>
@@ -176,29 +188,25 @@
           <button
             type="button"
             role="switch"
-            aria-checked={gridOverlayStore.showLayoutGrid}
+            aria-checked={gridStore.showLayoutGrid}
             aria-labelledby="{uid}-layout-title"
             class="switch"
             data-testid="btn-toggle-layout"
-            onclick={gridManagerStore.toggleLayoutGrid}
+            onclick={gridStore.toggleLayoutGrid}
           >
             <span class="switch__thumb"></span>
           </button>
         </header>
 
-        <div
-          class="section__body"
-          class:disabled={!gridOverlayStore.showLayoutGrid}
-          inert={!gridOverlayStore.showLayoutGrid}
-        >
+        <div class="section__body" class:disabled={!gridStore.showLayoutGrid} inert={!gridStore.showLayoutGrid}>
           <div class="fields">
             <ColorField
-              value={gridOverlayStore.layoutGridColor}
+              value={gridStore.layoutGridColor}
               fallback="#0000ff"
               pickerLabel="Pick layout grid color"
               opacityLabel="Layout grid opacity"
               pickerTestId="picker-layout-color"
-              onchange={gridManagerStore.updateLayoutGridColor}
+              onchange={gridStore.updateLayoutGridColor}
             />
           </div>
 
@@ -214,8 +222,8 @@
             </div>
 
             <div class="grid-list" role="radiogroup" aria-labelledby="{uid}-grids-label">
-              {#each gridManagerStore.layoutGrids as grid (grid.id)}
-                {@const isActive = gridOverlayStore.activeLayoutGridId === grid.id}
+              {#each gridStore.layoutGrids as grid (grid.id)}
+                {@const isActive = gridStore.activeLayoutGridId === grid.id}
                 {@const description = describeGrid(grid)}
                 <div class="grid-option" class:active={isActive}>
                   <label class="grid-option__choice">
@@ -224,7 +232,7 @@
                       class="grid-option__radio"
                       name="{uid}-active-grid"
                       checked={isActive}
-                      onchange={() => gridManagerStore.setActiveLayoutGrid(grid.id)}
+                      onchange={() => gridStore.setActiveLayoutGrid(grid.id)}
                     />
                     <span class="grid-option__mark" aria-hidden="true"></span>
                     <span class="grid-option__text">
@@ -235,7 +243,7 @@
                   <button
                     type="button"
                     class="grid-option__delete"
-                    onclick={() => gridManagerStore.delete(grid.id)}
+                    onclick={() => gridStore.delete(grid.id)}
                     disabled={isActive}
                     title={isActive ? "The grid in use can't be deleted" : "Delete this grid"}
                     aria-label="Delete grid {description.summary}"
@@ -324,6 +332,8 @@
         class="footer__button"
         class:footer__button--ghost={!confirmingReset}
         class:footer__button--danger={confirmingReset}
+        bind:this={resetButton}
+        disabled={gridStore.isResetting}
         data-testid="btn-reset"
         onclick={handleResetClick}
       >
@@ -458,8 +468,8 @@
     }
 
     &--short {
-      flex: none;
-      width: 88px;
+      flex: 0 1 auto;
+      width: 112px;
     }
   }
 

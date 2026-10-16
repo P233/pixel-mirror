@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("~/stores/database", () => import("~/stores/__fixtures__/memoryDatabase"));
+vi.mock("~/platform/database", () => import("~/stores/__fixtures__/memoryDatabase"));
 vi.mock("~/stores/toastStore.svelte", () => ({ toastStore: { showError: vi.fn() } }));
 
 type MemoryDatabase = typeof import("~/stores/__fixtures__/memoryDatabase");
@@ -19,7 +19,7 @@ describe("createSettings", () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    db = (await import("~/stores/database")) as unknown as MemoryDatabase;
+    db = (await import("~/platform/database")) as unknown as MemoryDatabase;
     db.resetMemoryDatabase();
     toastStore = (await import("~/stores/toastStore.svelte")).toastStore as unknown as typeof toastStore;
     settingsModule = await import("./settings.svelte");
@@ -51,18 +51,18 @@ describe("createSettings", () => {
     expect(dock.current).toEqual(DEFAULTS);
   });
 
-  it("saves changes made together as one snapshot as soon as the task ends", async () => {
+  it("saves changes made together as one field patch as soon as the task ends", async () => {
     const dock = createDock();
 
     dock.update({ theme: "dark" });
     dock.update({ position: "top" });
     expect(dock.current).toEqual({ position: "top", theme: "dark" });
-    expect(db.saveSettings).not.toHaveBeenCalled();
+    expect(db.updateSettings).not.toHaveBeenCalled();
 
     await Promise.resolve();
 
-    expect(db.saveSettings).toHaveBeenCalledTimes(1);
-    expect(db.saveSettings).toHaveBeenLastCalledWith("dock", { position: "top", theme: "dark" });
+    expect(db.updateSettings).toHaveBeenCalledTimes(1);
+    expect(db.updateSettings).toHaveBeenLastCalledWith("dock", { position: "top", theme: "dark" });
   });
 
   it("saves each later change right away, so a reload can't lose it", async () => {
@@ -71,9 +71,9 @@ describe("createSettings", () => {
     dock.update({ theme: "dark" });
     await Promise.resolve();
     dock.update({ position: "top" });
-    await Promise.resolve();
+    await settingsModule.flushSettings();
 
-    expect(db.saveSettings).toHaveBeenCalledTimes(2);
+    expect(db.updateSettings).toHaveBeenCalledTimes(2);
     expect(db.storedSettings("dock")).toEqual({ position: "top", theme: "dark" });
   });
 
@@ -83,26 +83,26 @@ describe("createSettings", () => {
 
     await settingsModule.flushSettings();
 
-    const [, saved] = db.saveSettings.mock.calls[0];
-    expect(structuredClone(saved)).toEqual({ position: "bottom", theme: "dark" });
+    const [, saved] = db.updateSettings.mock.calls[0];
+    expect(structuredClone(saved)).toEqual({ theme: "dark" });
   });
 
   it("flushes pending saves of every group at once", async () => {
     const dock = createDock();
     const overlay = settingsModule.createSettings(
       "gridOverlay",
-      { activeLayoutGridId: "" } as GridOverlaySettings,
+      { showLayoutGrid: false } as GridAppearanceSettings,
       {
-        activeLayoutGridId: () => true
+        showLayoutGrid: () => true
       } as never
     );
     dock.update({ theme: "dark" });
-    overlay.update({ activeLayoutGridId: "g1" });
+    overlay.update({ showLayoutGrid: true });
 
     await settingsModule.flushSettings();
 
     expect(db.storedSettings("dock")).toMatchObject({ theme: "dark" });
-    expect(db.storedSettings("gridOverlay")).toMatchObject({ activeLayoutGridId: "g1" });
+    expect(db.storedSettings("gridOverlay")).toMatchObject({ showLayoutGrid: true });
   });
 
   it("resets to the defaults and saves them", async () => {
@@ -117,7 +117,7 @@ describe("createSettings", () => {
   });
 
   it("reports a failed save", async () => {
-    db.saveSettings.mockRejectedValueOnce(new Error("quota"));
+    db.updateSettings.mockRejectedValueOnce(new Error("quota"));
     const dock = createDock();
 
     dock.update({ theme: "dark" });
@@ -125,6 +125,207 @@ describe("createSettings", () => {
 
     expect(toastStore.showError).toHaveBeenCalledWith(expect.any(Error), "Failed to save settings");
     expect(dock.current.theme).toBe("dark");
+  });
+
+  it("retries unsaved fields on the next edit after a save failure", async () => {
+    db.storeSettings("dock", DEFAULTS);
+    const dock = createDock();
+    await dock.load();
+    db.updateSettings.mockRejectedValueOnce(new Error("quota"));
+
+    dock.update({ theme: "dark" });
+    await settingsModule.flushSettings();
+    expect(db.storedSettings("dock")).toEqual(DEFAULTS);
+
+    dock.update({ position: "top" });
+    await settingsModule.flushSettings();
+    expect(db.storedSettings("dock")).toEqual({ position: "top", theme: "dark" });
+  });
+
+  it("serializes writes and keeps the latest edit when the preceding write fails", async () => {
+    let failFirstSave: (reason: Error) => void = () => {};
+    db.updateSettings.mockImplementationOnce(() => new Promise((_resolve, reject) => (failFirstSave = reject)));
+    const dock = createDock();
+    dock.update({ theme: "dark" });
+    const firstSave = settingsModule.flushSettings();
+
+    dock.update({ theme: "light" });
+    await Promise.resolve();
+    expect(db.updateSettings).toHaveBeenCalledTimes(1);
+    failFirstSave(new Error("temporary write failure"));
+    await firstSave;
+
+    dock.update({ position: "top" });
+    await settingsModule.flushSettings();
+    expect(db.storedSettings("dock")).toEqual({ position: "top", theme: "light" });
+  });
+
+  it("flushes an active save after its queued marker was consumed", async () => {
+    let release!: () => void;
+    db.updateSettings.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+    const dock = createDock();
+    dock.update({ theme: "dark" });
+    await Promise.resolve();
+    let isFlushed = false;
+    const flushing = settingsModule.flushSettings().then(() => {
+      isFlushed = true;
+    });
+    await Promise.resolve();
+    expect(isFlushed).toBe(false);
+    release();
+    await flushing;
+    expect(isFlushed).toBe(true);
+  });
+
+  it("waits for an active appearance write before a resource commit and flush includes both", async () => {
+    let releaseSave!: () => void;
+    db.updateSettings.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSave = resolve;
+        })
+    );
+    const dock = createDock();
+    dock.update({ theme: "dark" });
+    await Promise.resolve();
+    let releaseCommit!: () => void;
+    const write = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseCommit = resolve;
+      });
+      return { appearance: DEFAULTS, result: "committed" };
+    });
+    const publish = vi.fn();
+    const committing = dock.commit(["theme", "position"], write, publish);
+    expect(write).not.toHaveBeenCalled();
+    releaseSave();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    let isFlushed = false;
+    const flushing = settingsModule.flushSettings().then(() => {
+      isFlushed = true;
+    });
+    await Promise.resolve();
+    expect(isFlushed).toBe(false);
+    expect(publish).not.toHaveBeenCalled();
+    releaseCommit();
+    await Promise.all([committing, flushing]);
+    expect(publish).toHaveBeenCalledWith("committed");
+    expect(dock.current).toEqual(DEFAULTS);
+  });
+
+  it("retires failed covered edits on commit but preserves edits made during the commit", async () => {
+    const dock = createDock();
+    db.updateSettings.mockRejectedValueOnce(new Error("quota"));
+    dock.update({ theme: "dark" });
+    await settingsModule.flushSettings();
+    let release!: () => void;
+    const committing = dock.commit(
+      ["theme", "position"],
+      async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { appearance: DEFAULTS, result: undefined };
+      },
+      () => {}
+    );
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    dock.update({ position: "top" });
+    release();
+    await committing;
+    await settingsModule.flushSettings();
+    dock.update({ position: "bottom" });
+    await settingsModule.flushSettings();
+    expect(dock.current.theme).toBe("light");
+    expect(db.storedSettings("dock")).not.toMatchObject({ theme: "dark" });
+  });
+
+  it("does not publish or discard failed appearance edits when a resource commit fails", async () => {
+    const dock = createDock();
+    db.updateSettings.mockRejectedValueOnce(new Error("quota"));
+    dock.update({ theme: "dark" });
+    await settingsModule.flushSettings();
+    const publish = vi.fn();
+    await expect(
+      dock.commit(
+        ["theme"],
+        async () => {
+          throw new Error("commit failure");
+        },
+        publish
+      )
+    ).rejects.toThrow();
+    expect(publish).not.toHaveBeenCalled();
+    expect(dock.current.theme).toBe("dark");
+    dock.update({ position: "top" });
+    await settingsModule.flushSettings();
+    expect(db.storedSettings("dock")).toEqual({ position: "top", theme: "dark" });
+  });
+
+  it("preserves unread settings when the initial load fails", async () => {
+    db.storeSettings("dock", { position: "top", theme: "dark" });
+    db.getSettings.mockRejectedValueOnce(new Error("temporary read failure"));
+    const dock = createDock();
+    await expect(dock.load()).rejects.toThrow("temporary read failure");
+
+    dock.update({ theme: "light" });
+    await settingsModule.flushSettings();
+
+    expect(db.storedSettings("dock")).toEqual({ position: "top", theme: "light" });
+    await dock.load();
+    expect(dock.current).toEqual({ position: "top", theme: "light" });
+  });
+
+  it("keeps edits made while stored settings are loading", async () => {
+    let finishLoad: (stored: unknown) => void = () => {};
+    db.getSettings.mockImplementationOnce(() => new Promise((resolve) => (finishLoad = resolve)));
+    const dock = createDock();
+    const loading = dock.load();
+
+    dock.update({ theme: "light" });
+    await settingsModule.flushSettings();
+    finishLoad({ position: "top", theme: "dark" });
+    await loading;
+
+    expect(dock.current).toEqual({ position: "top", theme: "light" });
+  });
+
+  it("keeps in-flight edits when a retry reads old settings after the write fails", async () => {
+    db.storeSettings("dock", { position: "top", theme: "light" });
+    const dock = createDock();
+    let failSave: (error: Error) => void = () => {};
+    db.updateSettings.mockImplementationOnce(() => new Promise((_resolve, reject) => (failSave = reject)));
+    dock.update({ theme: "dark" });
+    const saving = settingsModule.flushSettings();
+
+    let finishLoad: (stored: unknown) => void = () => {};
+    db.getSettings.mockImplementationOnce(() => new Promise((resolve) => (finishLoad = resolve)));
+    const loading = dock.load();
+    failSave(new Error("temporary write failure"));
+    await saving;
+    finishLoad({ position: "top", theme: "light" });
+    await loading;
+
+    expect(dock.current).toEqual({ position: "top", theme: "dark" });
+    dock.update({ position: "bottom" });
+    await settingsModule.flushSettings();
+    expect(db.storedSettings("dock")).toEqual(dock.current);
+  });
+
+  it("releases in-flight fields after a successful write", async () => {
+    const dock = createDock();
+    dock.update({ theme: "dark" });
+    await settingsModule.flushSettings();
+    db.storeSettings("dock", { position: "top", theme: "light" });
+
+    await dock.load();
+
+    expect(dock.current).toEqual({ position: "top", theme: "light" });
   });
 });
 

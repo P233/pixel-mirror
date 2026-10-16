@@ -7,13 +7,19 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/sve
 import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GridManager from "./GridManager.svelte";
-import { gridManagerStore } from "~/stores/gridManagerStore.svelte";
-import { gridOverlayStore } from "~/stores/gridOverlayStore.svelte";
+import { gridStore } from "~/stores/gridStore.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
 
 // Mock stores
-vi.mock("~/stores/gridManagerStore.svelte", () => ({
-  gridManagerStore: {
+vi.mock("~/stores/gridStore.svelte", () => ({
+  gridStore: {
+    showSpacingGrid: false,
+    spacingGridHeight: "8px",
+    spacingGridColor: "rgba(255, 0, 0, 0.05)",
+    showLayoutGrid: false,
+    layoutGridColor: "rgba(0, 0, 255, 0.05)",
+    activeLayoutGridId: "",
+    isResetting: false,
     initialized: true,
     layoutGrids: [] as LayoutGridConfig[],
     init: vi.fn(),
@@ -29,17 +35,6 @@ vi.mock("~/stores/gridManagerStore.svelte", () => ({
   }
 }));
 
-vi.mock("~/stores/gridOverlayStore.svelte", () => ({
-  gridOverlayStore: {
-    showSpacingGrid: false,
-    spacingGridHeight: "8px",
-    spacingGridColor: "rgba(255, 0, 0, 0.05)",
-    showLayoutGrid: false,
-    layoutGridColor: "rgba(0, 0, 255, 0.05)",
-    activeLayoutGridId: null as string | null
-  }
-}));
-
 vi.mock("~/stores/dockStore.svelte", () => ({
   dockStore: {
     enterToolbar: vi.fn()
@@ -47,7 +42,7 @@ vi.mock("~/stores/dockStore.svelte", () => ({
 }));
 
 // Get typed references to mocks (use `as unknown as` to bypass type checking for mocked modules)
-const mockManagerStore = gridManagerStore as unknown as {
+const mockManagerStore = gridStore as unknown as {
   initialized: boolean;
   layoutGrids: LayoutGridConfig[];
   init: ReturnType<typeof vi.fn>;
@@ -62,7 +57,7 @@ const mockManagerStore = gridManagerStore as unknown as {
   reset: ReturnType<typeof vi.fn>;
 };
 
-const mockOverlayStore = gridOverlayStore as unknown as {
+const mockOverlayStore = gridStore as unknown as {
   showSpacingGrid: boolean;
   spacingGridHeight: string;
   spacingGridColor: string;
@@ -115,6 +110,7 @@ describe("GridManager component", () => {
       fn.mockReset();
     }
 
+    mockManagerStore.reset.mockResolvedValue(true);
     mockOverlayStore.showSpacingGrid = true;
     mockOverlayStore.spacingGridHeight = "8px";
     mockOverlayStore.spacingGridColor = "rgba(255, 0, 0, 0.05)";
@@ -246,6 +242,11 @@ describe("GridManager component", () => {
       const view = render(GridManager);
       const presets = within(view.getByRole("group", { name: "Height presets" }));
 
+      expect(presets.getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+        "4px",
+        "8px",
+        "16px"
+      ]);
       expect(presets.getByRole("button", { name: "8px" })).toHaveAttribute("aria-pressed", "true");
       expect(presets.getByRole("button", { name: "16px" })).toHaveAttribute("aria-pressed", "false");
 

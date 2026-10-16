@@ -1,7 +1,17 @@
 <script lang="ts">
   import type { Attachment } from "svelte/attachments";
   import { on } from "svelte/events";
-  import { fromPickedColor, parseColor, toPickerValue, toRgbaString } from "~/utils/color";
+  import { GRID_OPACITY_DEFAULT, GRID_OPACITY_MAX, GRID_OPACITY_MIN } from "~/constants";
+  import { clamp } from "~/stores/utils";
+  import {
+    constrainColorOpacity,
+    fromPickedColor,
+    parseColor,
+    resolveColor,
+    toPickerValue,
+    toRgbaString,
+    withColorOpacity
+  } from "~/utils/color";
 
   interface Props {
     /** The saved color; the field resets to it whenever it changes */
@@ -18,7 +28,7 @@
 
   const uid = $props.id();
   // Alpha for a picked color when the current text has none we can read (grid colors are faint)
-  const DEFAULT_ALPHA = 0.05;
+  const DEFAULT_ALPHA = GRID_OPACITY_DEFAULT;
   // Only Safari's native picker can pick alpha so far; elsewhere opacity is set on the field itself
   const HAS_NATIVE_ALPHA = typeof HTMLInputElement !== "undefined" && "alpha" in HTMLInputElement.prototype;
   // Wheel distance per percent: a mouse-wheel notch (100px) moves 5%, trackpads move finer
@@ -26,9 +36,11 @@
 
   // Editable draft: resets only when the saved color changes, so a rejected value stays visible
   let draft = $derived(value);
-  let color = $derived(parseColor(draft));
-  let opacityPercent = $derived(color ? Math.round(color.a * 100) : 100);
-  let pickerValue = $derived(toPickerValue(color, fallback, DEFAULT_ALPHA, HAS_NATIVE_ALPHA));
+  let color = $derived(resolveColor(draft));
+  let opacityPercent = $derived(
+    Math.round(clamp(color?.alpha ?? GRID_OPACITY_MAX, GRID_OPACITY_MIN, GRID_OPACITY_MAX) * 100)
+  );
+  let pickerValue = $derived(toPickerValue(color?.rgba ?? null, fallback, DEFAULT_ALPHA, HAS_NATIVE_ALPHA));
 
   // `alpha` isn't in Svelte's element types yet. The value is set again after it: assigned before the
   // attribute existed, it lost its alpha
@@ -43,23 +55,24 @@
       draft = value;
       return;
     }
-    if (trimmed !== value) onchange(trimmed);
+    if (trimmed !== value) apply(trimmed);
   }
 
   function apply(next: string) {
-    draft = next;
-    onchange(next);
+    draft = constrainColorOpacity(next);
+    onchange(draft);
   }
 
   function setOpacity(percent: number) {
     if (!color) return;
-    const alpha = Math.min(Math.max(Math.round(percent), 0), 100) / 100;
-    if (alpha !== color.a) apply(toRgbaString({ ...color, a: alpha }));
+    const alpha = clamp(Math.round(percent) / 100, GRID_OPACITY_MIN, GRID_OPACITY_MAX);
+    if (alpha !== color.alpha) apply(withColorOpacity(color, alpha));
   }
 
   function handlePick(e: Event) {
     const picked = parseColor((e.currentTarget as HTMLInputElement).value);
-    if (picked) apply(toRgbaString(fromPickedColor(picked, color, DEFAULT_ALPHA, HAS_NATIVE_ALPHA)));
+    if (picked)
+      apply(toRgbaString(fromPickedColor(picked, color ? { a: color.alpha } : null, DEFAULT_ALPHA, HAS_NATIVE_ALPHA)));
   }
 
   function handleTextKeydown(e: KeyboardEvent) {
@@ -78,8 +91,8 @@
       ArrowLeft: opacityPercent - step,
       PageUp: opacityPercent + 10,
       PageDown: opacityPercent - 10,
-      Home: 0,
-      End: 100
+      Home: GRID_OPACITY_MIN * 100,
+      End: GRID_OPACITY_MAX * 100
     };
     if (!(e.key in targets)) return;
     e.preventDefault();
@@ -140,8 +153,8 @@
         role="spinbutton"
         tabindex="0"
         aria-label={opacityLabel}
-        aria-valuemin={0}
-        aria-valuemax={100}
+        aria-valuemin={GRID_OPACITY_MIN * 100}
+        aria-valuemax={GRID_OPACITY_MAX * 100}
         aria-valuenow={opacityPercent}
         aria-valuetext="{opacityPercent}%"
         onkeydown={handleOpacityKeydown}
