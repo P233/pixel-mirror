@@ -1,9 +1,9 @@
 import { createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { scriptUrl } from "./script-url.js";
 
 // Served by the dev server itself, so the URL works wherever the package is installed
 // (hoisted monorepos, pnpm stores, linked packages) and regardless of `server.fs.allow`
-const SCRIPT_URL = "/@pixel-mirror/index.js";
 const SCRIPT_FILE = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
 export default function pixelMirror() {
@@ -11,7 +11,7 @@ export default function pixelMirror() {
     name: "pixel-mirror",
     apply: "serve",
     configureServer(server) {
-      server.middlewares.use(SCRIPT_URL, (_req, res) => {
+      server.middlewares.use(scriptUrl(server.config.base), (_req, res) => {
         createReadStream(SCRIPT_FILE)
           .on("open", () => {
             res.setHeader("Content-Type", "text/javascript; charset=utf-8");
@@ -25,8 +25,8 @@ export default function pixelMirror() {
           .pipe(res);
       });
     },
-    transformIndexHtml() {
-      return [{ tag: "script", attrs: { src: SCRIPT_URL, defer: true }, injectTo: "head" }];
+    transformIndexHtml(_html, context) {
+      return [{ tag: "script", attrs: { src: scriptUrl(context.server.config.base), defer: true }, injectTo: "head" }];
     }
   };
 }
