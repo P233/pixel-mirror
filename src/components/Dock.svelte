@@ -3,7 +3,7 @@
   import { tick } from "svelte";
   import { on } from "svelte/events";
   // Constants
-  import { OPACITY_MAX, OPACITY_MIN } from "~/constants";
+  import { DRAG_THRESHOLD, OPACITY_MAX, OPACITY_MIN } from "~/constants";
   // Platform
   import { isTypingInField } from "~/platform/typing";
   // Utils
@@ -33,10 +33,10 @@
   let alignmentButtonEl: HTMLButtonElement;
 
   // Touch slide on the opacity button
-  let opacitySliding = $state(false);
-  let opacitySlideStartX = 0;
-  let opacitySlideStartValue = 0;
+  let isOpacitySliding = $state(false);
+  let opacityGesture: { pointerId: number; startX: number; startY: number; startValue: number } | null = null;
   let opacityPointerType = "";
+  let isOpacityClickSuppressed = false;
 
   // Derived values from overlayController
   let opacityDisplay = $derived(Math.round(overlayController.opacity * 100));
@@ -182,24 +182,48 @@
    * Touch: slide horizontally on the opacity button to adjust it (100px = 50%)
    */
   function handleOpacityPointerDown(e: PointerEvent) {
+    if (opacityGesture) return;
     opacityPointerType = e.pointerType;
+    isOpacityClickSuppressed = false;
     if (e.pointerType !== "touch") return;
 
+    cancelPopoverClose();
+    opacityGesture = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startValue: overlayController.opacity
+    };
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    opacitySliding = true;
-    opacitySlideStartX = e.clientX;
-    opacitySlideStartValue = overlayController.opacity;
   }
 
   function handleOpacityPointerMove(e: PointerEvent) {
-    if (!opacitySliding) return;
+    if (!opacityGesture || e.pointerId !== opacityGesture.pointerId) return;
 
-    const dx = e.clientX - opacitySlideStartX;
-    overlayController.setOpacity(opacitySlideStartValue + dx / 200);
+    const dx = e.clientX - opacityGesture.startX;
+    const dy = e.clientY - opacityGesture.startY;
+    if (!isOpacitySliding && Math.abs(dx) <= DRAG_THRESHOLD && Math.abs(dy) <= DRAG_THRESHOLD) return;
+
+    isOpacitySliding = true;
+    isOpacityClickSuppressed = true;
+    overlayController.setOpacity(opacityGesture.startValue + dx / 200);
   }
 
-  function handleOpacityPointerEnd() {
-    opacitySliding = false;
+  function endOpacityGesture(isCancelled: boolean) {
+    if (!opacityGesture) return;
+    const { pointerId } = opacityGesture;
+    opacityGesture = null;
+    isOpacitySliding = false;
+    if (isCancelled) {
+      isOpacityClickSuppressed = true;
+      if (opacityButtonEl.hasPointerCapture?.(pointerId)) opacityButtonEl.releasePointerCapture(pointerId);
+    }
+  }
+
+  function handleOpacityPointerEnd(e: PointerEvent) {
+    if (!opacityGesture || e.pointerId !== opacityGesture.pointerId) return;
+    if (e.type === "pointerup") handleOpacityPointerMove(e);
+    endOpacityGesture(e.type !== "pointerup");
   }
 
   async function handleOpacityClick(e: MouseEvent) {
@@ -211,7 +235,10 @@
       dockElement.querySelector<HTMLInputElement>(".opacity-slider")?.focus();
       return;
     }
-    if (opacityPointerType === "touch") return;
+    if (opacityPointerType === "touch") {
+      if (!opacityGesture && !isOpacityClickSuppressed) openPopover("opacity");
+      return;
+    }
     overlayController.resetOpacity();
   }
 
@@ -237,6 +264,9 @@
 
   // Reset popover state if underlying controls become disabled or locked
   $effect(() => {
+    if (isControlsDisabled || isStudioOpen || overlayController.isSolidOrZoomed) {
+      endOpacityGesture(true);
+    }
     if (isControlsDisabled || isStudioOpen || (activePopover === "alignment" && isLocked)) {
       closePopover();
     }
@@ -330,7 +360,7 @@
     <button
       bind:this={opacityButtonEl}
       class="icon-button opacity-button"
-      class:sliding={opacitySliding}
+      class:sliding={isOpacitySliding}
       class:active={showOpacityPopover}
       data-testid="btn-opacity"
       disabled={isControlsDisabled || isStudioOpen}
@@ -342,9 +372,10 @@
       onpointermove={handleOpacityPointerMove}
       onpointerup={handleOpacityPointerEnd}
       onpointercancel={handleOpacityPointerEnd}
+      onlostpointercapture={handleOpacityPointerEnd}
       onmouseenter={handleOpacityMouseEnter}
       onmouseleave={handleOpacityMouseLeave}
-      title="Opacity (Enter to adjust, click to reset, hover or Ctrl+Scroll)"
+      title="Opacity (tap or Enter to adjust, touch-slide to change, click to reset, hover or Ctrl+Scroll)"
     >
       <OpacityIcon level={overlayController.opacity} />
     </button>

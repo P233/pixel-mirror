@@ -138,6 +138,23 @@ describe("device detection", () => {
       document.body.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "pen", bubbles: true }));
       expect(isLastInputTouch()).toBe(false);
     });
+
+    it.each([
+      ["touch", true],
+      ["mouse", false],
+      ["pen", false]
+    ] as const)("tracks %s before compatibility mouseenter", async (pointerType, isTouch) => {
+      const { initInputTypeTracking, isLastInputTouch, resetInputType } = await import("./device");
+      resetInputType();
+      initInputTypeTracking();
+      document.body.dispatchEvent(
+        new PointerEvent("pointerdown", { pointerType: isTouch ? "mouse" : "touch", bubbles: true })
+      );
+
+      document.body.dispatchEvent(new PointerEvent("pointerover", { pointerType, bubbles: true }));
+
+      expect(isLastInputTouch()).toBe(isTouch);
+    });
   });
 
   describe("initInputTypeTracking", () => {
@@ -151,13 +168,13 @@ describe("device detection", () => {
       addEventListenerSpy.mockRestore();
     });
 
-    it("should attach pointerdown listener to document", async () => {
+    it.each(["pointerdown", "pointerover"])("should attach a %s listener to document", async (type) => {
       const { initInputTypeTracking } = await import("./device");
 
       initInputTypeTracking();
 
       expect(addEventListenerSpy).toHaveBeenCalledWith(
-        "pointerdown",
+        type,
         expect.any(Function),
         expect.objectContaining({ capture: true, passive: true })
       );

@@ -3,6 +3,7 @@
  */
 
 import { cleanup, render } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Dock from "./Dock.svelte";
 import { dockStore } from "~/stores/dockStore.svelte";
@@ -792,24 +793,28 @@ describe("Dock component", () => {
 describe("Dock component (touch device)", () => {
   beforeEach(() => {
     mockIsTouchDevice.mockReturnValue(true);
-    mockIsLastInputTouch.mockReturnValue(false);
+    mockIsLastInputTouch.mockReturnValue(true);
 
     mockDockStore.initialized = true;
     mockDockStore.mode = "toolbar";
     mockMockupStore.activeMockupId = "test-id";
     mockMockupStore.isHidden = false;
     mockMockupStore.isLocked = false;
+    mockMockupStore.isDragging = false;
+    mockMockupStore.isSolidOrZoomed = false;
     mockMockupStore.opacity = 0.5;
     mockMockupStore.setOpacity.mockClear();
     mockMockupStore.resetOpacity.mockClear();
+    mockMockupStore.setAlignment.mockClear();
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  const pointer = (type: string, pointerType: string, clientX = 0) =>
-    new PointerEvent(type, { pointerId: 1, pointerType, clientX, bubbles: true, cancelable: true });
+  const pointer = (type: string, pointerType: string, clientX = 0, init: PointerEventInit = {}) =>
+    new PointerEvent(type, { pointerId: 1, pointerType, clientX, bubbles: true, cancelable: true, ...init });
+  const pointerClick = () => new MouseEvent("click", { bubbles: true, detail: 1 });
 
   describe("opacity touch sliding", () => {
     const opacityButton = () =>
@@ -833,7 +838,7 @@ describe("Dock component (touch device)", () => {
       expect(mockMockupStore.setOpacity).toHaveBeenLastCalledWith(0.3);
     });
 
-    it.each(["pointerup", "pointercancel"])("stops sliding on %s", (endType) => {
+    it.each(["pointerup", "pointercancel", "lostpointercapture"])("stops sliding on %s", (endType) => {
       const button = opacityButton();
       button.dispatchEvent(pointer("pointerdown", "touch", 100));
       button.dispatchEvent(pointer(endType, "touch", 150));
@@ -855,14 +860,144 @@ describe("Dock component (touch device)", () => {
       expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
     });
 
-    it("does not reset opacity after a touch tap or slide", () => {
+    it("opens the popover on a touch tap without resetting opacity", async () => {
       const button = opacityButton();
 
       button.dispatchEvent(pointer("pointerdown", "touch", 100));
       button.dispatchEvent(pointer("pointerup", "touch", 100));
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      button.dispatchEvent(pointerClick());
+      await tick();
 
       expect(mockMockupStore.resetOpacity).not.toHaveBeenCalled();
+      expect(button).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("keeps a small finger movement as a tap without changing opacity", async () => {
+      const button = opacityButton();
+
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointermove", "touch", 103));
+      button.dispatchEvent(pointer("pointerup", "touch", 103));
+      button.dispatchEvent(pointerClick());
+      await tick();
+
+      expect(mockMockupStore.setOpacity).not.toHaveBeenCalled();
+      expect(button).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("does not open or reset after sliding away and back to the starting point", async () => {
+      const button = opacityButton();
+
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointermove", "touch", 140));
+      button.dispatchEvent(pointer("pointermove", "touch", 100));
+      button.dispatchEvent(pointer("pointerup", "touch", 100));
+      button.dispatchEvent(pointerClick());
+      await tick();
+
+      expect(mockMockupStore.setOpacity).toHaveBeenLastCalledWith(0.5);
+      expect(mockMockupStore.resetOpacity).not.toHaveBeenCalled();
+      expect(button).toHaveAttribute("aria-expanded", "false");
+    });
+
+    it("uses the release position even without an intermediate pointermove", async () => {
+      const button = opacityButton();
+
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointerup", "touch", 140));
+      button.dispatchEvent(pointerClick());
+      await tick();
+
+      expect(mockMockupStore.setOpacity).toHaveBeenLastCalledWith(0.7);
+      expect(button).toHaveAttribute("aria-expanded", "false");
+    });
+
+    it.each(["pointerup", "pointercancel", "lostpointercapture"])(
+      "ignores another pointer's movement and %s while the first finger slides",
+      async (endType) => {
+        const button = opacityButton();
+
+        button.dispatchEvent(pointer("pointerdown", "touch", 100));
+        button.dispatchEvent(pointer("pointerdown", "touch", 130, { pointerId: 2 }));
+        button.dispatchEvent(pointer("pointermove", "touch", 180, { pointerId: 2 }));
+        expect(mockMockupStore.setOpacity).not.toHaveBeenCalled();
+
+        button.dispatchEvent(pointer("pointermove", "touch", 140));
+        expect(mockMockupStore.setOpacity).toHaveBeenLastCalledWith(0.7);
+
+        button.dispatchEvent(pointer(endType, "touch", 180, { pointerId: 2 }));
+        button.dispatchEvent(pointer("pointermove", "touch", 160));
+        expect(mockMockupStore.setOpacity).toHaveBeenLastCalledWith(0.8);
+
+        button.dispatchEvent(pointer("pointerup", "touch", 160));
+        button.dispatchEvent(pointerClick());
+        await tick();
+        expect(button).toHaveAttribute("aria-expanded", "false");
+      }
+    );
+
+    it.each(["pointercancel", "lostpointercapture"])("allows a fresh tap after %s", async (endType) => {
+      const button = opacityButton();
+
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer(endType, "touch", 100));
+      button.dispatchEvent(pointerClick());
+      await tick();
+      expect(button).toHaveAttribute("aria-expanded", "false");
+
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointerup", "touch", 100));
+      button.dispatchEvent(pointerClick());
+      await tick();
+      expect(button).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("still resets on a mouse click after a touch slide", () => {
+      const button = opacityButton();
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointermove", "touch", 140));
+      button.dispatchEvent(pointer("pointerup", "touch", 140));
+      button.dispatchEvent(pointerClick());
+
+      mockIsLastInputTouch.mockReturnValue(false);
+      button.dispatchEvent(pointer("pointerdown", "mouse", 100));
+      button.dispatchEvent(pointerClick());
+
+      expect(mockMockupStore.resetOpacity).toHaveBeenCalledTimes(1);
+    });
+
+    it("still opens and focuses the slider with the keyboard after a touch slide", async () => {
+      const { container } = render(Dock);
+      const button = container.querySelector<HTMLButtonElement>("[data-testid='btn-opacity']")!;
+      button.dispatchEvent(pointer("pointerdown", "touch", 100));
+      button.dispatchEvent(pointer("pointermove", "touch", 140));
+      button.dispatchEvent(pointer("pointerup", "touch", 140));
+      button.dispatchEvent(pointerClick());
+
+      button.click();
+
+      await vi.waitFor(() => expect(container.querySelector("[data-testid='slider-opacity']")).toHaveFocus());
+      expect(mockMockupStore.resetOpacity).not.toHaveBeenCalled();
+    });
+
+    it("switches from alignment to opacity on a tap and closes on an outside touch", async () => {
+      const { container } = render(Dock);
+      const alignment = container.querySelector<HTMLButtonElement>("[data-testid='btn-alignment']")!;
+      const opacity = container.querySelector<HTMLButtonElement>("[data-testid='btn-opacity']")!;
+      alignment.dispatchEvent(pointerClick());
+      await tick();
+      expect(alignment).toHaveAttribute("aria-expanded", "true");
+
+      opacity.dispatchEvent(pointer("pointerdown", "touch", 100));
+      opacity.dispatchEvent(pointer("pointerup", "touch", 100));
+      opacity.dispatchEvent(pointerClick());
+      await tick();
+      expect(alignment).toHaveAttribute("aria-expanded", "false");
+      expect(opacity).toHaveAttribute("aria-expanded", "true");
+
+      document.body.dispatchEvent(pointer("pointerdown", "touch", 100));
+      await tick();
+      expect(opacity).toHaveAttribute("aria-expanded", "false");
     });
   });
 });

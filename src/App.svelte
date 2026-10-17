@@ -19,11 +19,18 @@
 
   onMount(startApp);
 
-  // Global double-tap: anywhere on the page (dock included) toggles solid mode
+  // Global double-tap toggles solid mode without swallowing control activation.
   const doubleTap = createDoubleTapDetector();
 
   function handleGlobalTouchStart(e: TouchEvent) {
-    if (dockStore.isManagerMode || e.touches.length !== 1) return doubleTap.cancel();
+    const isControlTouch = e
+      .composedPath()
+      .some(
+        (target) =>
+          target instanceof Element &&
+          target.matches("button, input, select, textarea, a[href], [contenteditable], [role='button']")
+      );
+    if (isControlTouch || dockStore.isManagerMode || e.touches.length !== 1) return doubleTap.cancel();
     const touch = e.touches[0];
     doubleTap.start({ x: touch.clientX, y: touch.clientY }, Date.now());
   }

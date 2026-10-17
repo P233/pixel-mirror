@@ -59,14 +59,12 @@ export function isLastInputTouch(): boolean {
 export function initInputTypeTracking(): void {
   if (inputTypeListenersAttached) return;
 
-  // Use pointerdown to detect input type as early as possible
-  document.addEventListener(
-    "pointerdown",
-    (e: PointerEvent) => {
-      lastInputType = e.pointerType as InputType;
-    },
-    { capture: true, passive: true }
-  );
+  const trackInputType = (e: PointerEvent) => {
+    lastInputType = e.pointerType as InputType;
+  };
+  // Pointerover precedes compatibility mouseenter; pointerdown also tracks clicks without re-entry.
+  document.addEventListener("pointerover", trackInputType, { capture: true, passive: true });
+  document.addEventListener("pointerdown", trackInputType, { capture: true, passive: true });
 
   inputTypeListenersAttached = true;
 }

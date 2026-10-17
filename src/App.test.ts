@@ -189,22 +189,28 @@ describe("drag-and-drop upload", () => {
 });
 
 describe("double tap on touch devices", () => {
-  const touchEvent = (type: string, points: Position[], changed: Position[] = points) => {
+  const touchEvent = (
+    type: string,
+    points: Position[],
+    changed: Position[] = points,
+    target: EventTarget = document.body
+  ) => {
     const touches = (values: Position[]) =>
       values.map(({ x, y }, identifier) => ({ identifier, clientX: x, clientY: y }) as Touch);
     const event = new TouchEvent(type, {
       bubbles: true,
+      composed: true,
       cancelable: true,
       touches: touches(points),
       changedTouches: touches(changed)
     });
-    document.body.dispatchEvent(event);
+    target.dispatchEvent(event);
     return event;
   };
 
-  const tap = (x = 100, y = 100) => {
-    touchEvent("touchstart", [{ x, y }]);
-    return touchEvent("touchend", [], [{ x, y }]);
+  const tap = (x = 100, y = 100, target: EventTarget = document.body) => {
+    touchEvent("touchstart", [{ x, y }], undefined, target);
+    return touchEvent("touchend", [], [{ x, y }], target);
   };
 
   beforeEach(() => {
@@ -219,6 +225,41 @@ describe("double tap on touch devices", () => {
 
     expect(overlay.toggleMobileSolidMode).toHaveBeenCalledTimes(1);
     expect(second.defaultPrevented).toBe(true);
+  });
+
+  it.each(["button", "input", "select", "textarea", "a"])(
+    "leaves repeated taps on a %s inside the tool's shadow root to the control",
+    async (tag) => {
+      await renderApp();
+      const host = document.createElement("pixel-mirror");
+      const root = host.attachShadow({ mode: "open" });
+      const control = document.createElement(tag);
+      if (tag === "a") control.setAttribute("href", "#");
+      root.appendChild(control);
+      document.body.appendChild(host);
+
+      tap(100, 100, control);
+      const second = tap(100, 100, control);
+
+      expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
+      expect(second.defaultPrevented).toBe(false);
+    }
+  );
+
+  it("cancels page tap history when a nested button icon is touched", async () => {
+    await renderApp();
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    button.appendChild(icon);
+    document.body.appendChild(button);
+
+    tap();
+    tap(100, 100, icon);
+    tap();
+    expect(overlay.toggleMobileSolidMode).not.toHaveBeenCalled();
+
+    tap();
+    expect(overlay.toggleMobileSolidMode).toHaveBeenCalledTimes(1);
   });
 
   it("disables browser zoom gestures while the mockup is shown", async () => {
