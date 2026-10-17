@@ -54,9 +54,9 @@ Moving the mockup only releases the alignment of the axis you move it along: cen
 | Show / Hide mockup        | Toolbar button                                     |
 | Lock / Unlock position    | Toolbar button                                     |
 | Snap to an edge or center | Tap the alignment button; tap again for top center |
-| Adjust opacity            | Horizontal slide on opacity button                 |
+| Adjust opacity            | Tap for controls, or slide on the opacity button   |
 | Drag mockup               | Touch drag on overlay                              |
-| Toggle solid mode         | Double-tap anywhere                                |
+| Toggle solid mode         | Double-tap outside controls                        |
 | Pinch zoom in solid mode  | Two-finger pinch (0.25x–4x)                        |
 | Pan in solid mode         | Single finger drag                                 |
 | Cycle scale (1x / 0.5x)   | Toolbar button                                     |
